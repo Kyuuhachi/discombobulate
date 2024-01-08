@@ -15,11 +15,10 @@ const ast = esprima.parseScript(input);
 
 clean(ast);
 
-prettier.format(escodegen.generate(ast), {
+prettier.format(escodegen.generate(ast, { format: { escapeless: true } }), {
 	parser: "babel",
 	printWidth: 120,
 	useTabs: true,
-	quoteProps: "consistent",
 }).then(output => fs.writeFileSync(process.stdout.fd, output))
 
 function renameAll(scopes) {

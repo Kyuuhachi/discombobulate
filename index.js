@@ -10,6 +10,8 @@ import * as escope     from "escope";
 import * as escodegen  from "escodegen-wallaby";
 import * as prettier   from "prettier";
 
+import {test, Id, T} from "./test.js";
+
 const input = fs.readFileSync(process.stdin.fd, 'utf-8');
 const ast = esprima.parseScript(input);
 
@@ -108,18 +110,16 @@ function unminify(ast) { // {{{
 					break;
 			}
 
-			if(test(node, {
-				type: "ReturnStatement",
-				argument: { type: "UnaryExpression", operator: "void" },
-			})) {
-				return {
-					type: "BlockStatement",
+			if(test(node, T.ReturnStatement({
+				argument: T.UnaryExpression({ operator: "void" }),
+			}))) {
+				return T.BlockStatement({
 					_fake_block: true,
 					body: [
-						{type: "ExpressionStatement", expression: node.argument.argument},
-						{type: "ReturnStatement", argument: null},
+						T.ExpressionStatement({ expression: node.argument.argument }),
+						T.ReturnStatement({ argument: null }),
 					]
-				};
+				});
 			}
 
 			switch(node.type) {
@@ -133,31 +133,29 @@ function unminify(ast) { // {{{
 		},
 
 		leave(node) {
-			if(test(node, {
-				type: "UnaryExpression", operator: "!",
-				argument: { type: "Literal", value: 0 },
-			})) return { type: "Literal", value: true, raw: "true" };
+			if(test(node, T.UnaryExpression({
+				operator: "!",
+				argument: T.Literal({ value: 0 }),
+			}))) return T.Literal({ value: true, raw: "true" });
 
-			if(test(node, {
-				type: "UnaryExpression", operator: "!",
-				argument: { type: "Literal", value: 1 },
-			})) return { type: "Literal", value: false, raw: "false" };
+			if(test(node, T.UnaryExpression({
+				operator: "!",
+				argument: T.Literal({ value: 1 }),
+			}))) return T.Literal({ value: false, raw: "false" });
 
 			if(node.type == "VariableDeclaration" && !node._is_for)
-				return {
-					type: "BlockStatement",
+				return T.BlockStatement({
 					_fake_block: true,
 					body: node.declarations.map(d => Object.assign({}, node, {declarations: [d]})),
-				};
+				});
 
 			if(node.type == "BlockStatement" || node.type == "Program")
 				node.body = node.body.flatMap(n => n._fake_block ? n.body : [n]);
 
 			if(node.type == "SwitchCase")
-				node.consequent = node.consequent.length == 0 ? [] : [{
-					type: "BlockStatement",
+				node.consequent = node.consequent.length == 0 ? [] : [T.BlockStatement({
 					body: node.consequent.flatMap(n => n._fake_block ? n.body : [n]),
-				}];
+				})];
 		}
 	});
 }
@@ -166,16 +164,14 @@ function unminifyBlock(stmt, child, level) {
 	if(stmt[child] === null) return;
 
 	if(level >= 0 && stmt[child].type == "SequenceExpression") {
-		const newStmt = {
-			type: "BlockStatement",
-			body: [],
+		const newStmt = T.BlockStatement({
 			_fake_block: true,
-		};
+			body: [],
+		});
 		while(stmt[child].expressions.length > 1) {
-			newStmt.body.push({
-				type: "ExpressionStatement",
+			newStmt.body.push(T.ExpressionStatement({
 				expression: stmt[child].expressions.shift(),
-			});
+			}));
 		}
 		stmt[child] = stmt[child].expressions[0];
 		newStmt.body.push(stmt);
@@ -184,26 +180,23 @@ function unminifyBlock(stmt, child, level) {
 
 	if(level >= 1 && stmt[child].type == "ConditionalExpression") {
 		const {test, consequent, alternate} = stmt[child];
-		return {
-			type: "IfStatement",
+		return T.IfStatement({
 			test: test,
 			consequent: Object.assign({}, stmt, {[child]: consequent}),
 			alternate:  Object.assign({}, stmt, {[child]: alternate}),
-		};
+		});
 	}
 
 	if(level >= 2 && stmt[child].type == "LogicalExpression") {
 		const {operator, left, right} = stmt[child];
-		return {
-			type: "IfStatement",
-			test: operator == "||" ? {
-				type: "UnaryExpression",
+		return T.IfStatement({
+			test: operator == "||" ? T.UnaryExpression({
 				operator: "!",
 				argument: left,
-			} : left,
+			}) : left,
 			consequent: Object.assign({}, stmt, {[child]: right}),
 			alternate:  null,
-		};
+		});
 	}
 }
 // }}}
@@ -215,79 +208,54 @@ function inferNames(ast) {
 			if(node.type == "ObjectPattern") {
 				// This one has a small risk of accidental shadowing.
 				for(const prop of node.properties) {
-					if(prop.type == "Property" && prop.value.type == "Identifier") {
+					if(test(prop, T.Property({ value: Id }))) {
 						rename(prop.value.variable, prop.key.name);
 						prop.shorthand = true;
-					} else if(prop.type == "Property"
-						&& prop.value.type == "AssignmentPattern"
-						&& prop.value.left.type == "Identifier"
-					) {
+					} else if(T.Property({ value: T.AssignmentPattern({ left: Id }) })) {
 						rename(prop.value.left.variable, prop.key.name);
 						prop.shorthand = true;
 					}
 				}
 			}
 
-			if(test(node, { // definePropertyGetters
-				type: "CallExpression",
-				callee: {
-					type: "MemberExpression",
-					object: { type: "Identifier", name: "require" },
-					property: { type: "Identifier", name: "d" },
-				},
-				arguments: [ { type: "Identifier", name: "exports" }, { type: "ObjectExpression" } ]
-			})) {
+			if(test(node, T.CallExpression({
+				callee: T.MemberExpression({ object: Id.require, property: Id.d, }),
+				arguments: [ Id.exports, T.ObjectExpression ]
+			}))) {
 				for(const prop of node.arguments[1].properties) {
-					if(!test(prop.value, {
-						type: "FunctionExpression",
+					if(!test(prop.value, T.FunctionExpression({
 						id: null,
 						params: [],
-						body: { type: "BlockStatement", body: [{
-							type: "ReturnStatement", argument: { type: "Identifier" },
-						}] }
-					})) throw prop;
+						body: T.BlockStatement({ body: [T.ReturnStatement({ argument: Id })] })
+					}))) throw prop;
 					let name = prop.key.name === "default" ? "_default" : prop.key.name;
 					let ident = prop.value.body.body[0].argument;
 					rename(ident.variable, name);
-					prop.value = {
-						type: "ArrowFunctionExpression",
+					prop.value = T.ArrowFunctionExpression({
 						params: prop.value.params,
 						body: ident,
 						expression: true,
-					};
+					});
 				}
 			}
 
-			if(test(node, {
-				type: "VariableDeclaration",
-				declarations: [{
-					init: {
-						type: "CallExpression",
-						callee: { type: "Identifier", name: "require" },
-						arguments: [{ type: "Literal" }],
-					}
-				}]
-			})) {
+			if(test(node, T.VariableDeclaration({ declarations: [{
+				init: T.CallExpression({ callee: Id.require, arguments: [T.Literal] })
+			}] }))) {
 				let decl = node.declarations[0];
 				if(!decl.id.variable._renamed) {
 					rename(decl.id.variable, "_" + import_n++)
 				}
 			}
 
-			if(test(node, {
-				type: "VariableDeclaration",
+			if(test(node, T.VariableDeclaration({
 				declarations: [{
-					init: {
-						type: "CallExpression",
-						callee: {
-							type: "MemberExpression",
-							object: { type: "Identifier", name: "require" },
-							property: { type: "Identifier", name: "n" },
-						},
-						arguments: [{ type: "Identifier" }],
-					}
+					init: T.CallExpression({
+						callee: T.MemberExpression({ object: Id.require, property: Id.n }),
+						arguments: [Id],
+					})
 				}]
-			})) {
+			}))) {
 				let decl = node.declarations[0];
 				let arg = decl.init.arguments[0];
 				rename(decl.id.variable, arg.name)
@@ -298,21 +266,12 @@ function inferNames(ast) {
 }
 
 function extractZero(node) {
-	if(test(node, {
-		type: "SequenceExpression",
+	if(test(node, T.SequenceExpression({
 		expressions: [
-			{
-				type: "Literal",
-				value: 0,
-			},
-			{
-				type: "MemberExpression",
-				computed: false,
-				object: { type: "Identifier" },
-				property: { type: "Identifier" },
-			},
+			T.Literal({ value: 0 }),
+			T.MemberExpression({ computed: false, object: Id, property: Id }),
 		],
-	})) return node.expressions[1];
+	}))) return node.expressions[1];
 }
 
 function unjsx(ast) { // {{{
@@ -327,18 +286,19 @@ function unjsx(ast) { // {{{
 	}
 
 	function toJsxName(node, top = true) {
-		if(node.type == "Literal") {
-			return { type: "JSXIdentifier", name: node.value }
-		} else if(node.type == "MemberExpression") {
-			node.type = "JSXMemberExpression";
-			node.object = toJsxName(node.object, false);
-			return node;
-		} else if(node.type == "Identifier") {
-			node.type = "JSXIdentifier"
-			if(top) node._jsx = true;
-			return node;
-		} else {
-			throw node;
+		switch(node.type) {
+			case "Literal":
+				return T.JSXIdentifier({ name: node.value })
+			case "MemberExpression":
+				node.type = "JSXMemberExpression";
+				node.object = toJsxName(node.object, false);
+				return node;
+			case "Identifier":
+				node.type = "JSXIdentifier"
+				if(top) node._jsx = true;
+				return node;
+			default:
+				throw node;
 		}
 	}
 
@@ -350,11 +310,10 @@ function unjsx(ast) { // {{{
 				if(item.key.name == "children") {
 					children = toJsxChildren(item.value);
 				} else {
-					attributes.push({
-						type: "JSXAttribute",
+					attributes.push(T.JSXAttribute({
 						name: toJsxName(item.key),
-						value: { type: "JSXExpressionContainer", expression: item.value },
-					});
+						value: T.JSXExpressionContainer({ expression: item.value }),
+					}));
 				}
 			} else if(item.type == "SpreadElement") {
 				item.type = "JSXSpreadAttribute";
@@ -364,11 +323,10 @@ function unjsx(ast) { // {{{
 			}
 		}
 		if(key) {
-			attributes.push({
-				type: "JSXAttribute",
-				name: { type: "JSXIdentifier", name: "key" },
-				value: { type: "JSXExpressionContainer", expression: key },
-			})
+			attributes.push(T.JSXAttribute({
+				name: T.JSXIdentifier({ name: "key" }),
+				value: T.JSXExpressionContainer({ expression: key }),
+			}))
 		}
 		return [attributes, children]
 	}
@@ -381,13 +339,13 @@ function unjsx(ast) { // {{{
 						case "JSXElement":
 							return child;
 						default:
-							return { type: "JSXExpressionContainer", expression: child }
+							return T.JSXExpressionContainer({ expression: child })
 					}
 				});
 			case "JSXElement":
 				return [ child ];
 			default:
-				return [{ type: "JSXExpressionContainer", expression: child }]
+				return [T.JSXExpressionContainer({ expression: child })]
 		}
 	}
 
@@ -411,47 +369,21 @@ function unjsx(ast) { // {{{
 
 			// estraverse-fb doesn't support JSXFragment, so can't insert those
 			const name = toJsxName(jsx[1][0]);
-			return {
-				type: "JSXElement",
-				openingElement: {
-					type: "JSXOpeningElement",
+			return T.JSXElement({
+				openingElement: T.JSXOpeningElement({
 					attributes,
 					name,
 					selfClosing: children === undefined,
-				},
+				}),
 				children: children ?? [],
-				closingElement: children !== undefined ? {
-					type: "JSXClosingElement",
+				closingElement: children !== undefined ? T.JSXClosingElement({
 					name,
-				} : null,
-			}
+				}) : null,
+			})
 		}
 	})
 } // }}}
 
 function unzero(ast) {
 	estraverse.replace(ast, { enter: extractZero })
-}
-
-function test(a, b) {
-	if(typeof a != typeof b) return false;
-	if(b == null) return a == null;
-	if(a == null) return false;
-
-	if(Array.isArray(b)) {
-		if(!Array.isArray(a)) return false;
-		if(b.length != a.length) return false;
-		for(let i = 0; i < b.length; i++)
-			if(!test(a[i], b[i])) return false;
-		return true;
-	}
-	
-	if(typeof a == "object") {
-		for(const key of Object.getOwnPropertyNames(b))
-			if(!test(a[key], b[key]))
-				return false;
-		return true;
-	}
-
-	return a === b;
 }

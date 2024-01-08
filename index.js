@@ -245,6 +245,7 @@ function inferNames(ast) {
 				let decl = node.declarations[0];
 				if(!decl.id.variable._renamed) {
 					rename(decl.id.variable, "_" + import_n++)
+					decl.id.variable.isImport = true;
 				}
 			}
 
@@ -260,6 +261,7 @@ function inferNames(ast) {
 				let arg = decl.init.arguments[0];
 				rename(decl.id.variable, arg.name)
 				rename(arg.variable, arg.name + "_")
+				decl.id.variable.isImport = true;
 			}
 		}
 	})
@@ -271,7 +273,8 @@ function extractZero(node) {
 			T.Literal({ value: 0 }),
 			T.MemberExpression({ computed: false, object: Id, property: Id }),
 		],
-	}))) return node.expressions[1];
+	})) && node.expressions[1].object.variable.isImport)
+		return node.expressions[1];
 }
 
 function unjsx(ast) { // {{{

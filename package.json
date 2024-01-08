@@ -1,6 +1,7 @@
 {
   "name": "jsclean",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "run": "node index.js"
   },

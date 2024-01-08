@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /* eslint-env node */
 
-const process    = require("process");
-const fs         = require("fs");
+import * as process from "process";
+import * as fs from "fs";
 
-const esprima    = require("esprima-next");
-const estraverse = require("estraverse-fb");
-const escope     = require("escope");
-const escodegen  = require("escodegen-wallaby");
-const prettier   = require("prettier");
+import * as esprima    from "esprima-next";
+import * as estraverse from "estraverse-fb";
+import * as escope     from "escope";
+import * as escodegen  from "escodegen-wallaby";
+import * as prettier   from "prettier";
 
 const input = fs.readFileSync(process.stdin.fd, 'utf-8');
 const ast = esprima.parseScript(input);

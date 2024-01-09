@@ -10,7 +10,7 @@ import * as escope     from "escope";
 import * as escodegen  from "escodegen-wallaby";
 import * as prettier   from "prettier";
 
-import {test, Id, T} from "./test.js";
+import {test, Id, T, match} from "./test.js";
 
 const input = fs.readFileSync(process.stdin.fd, 'utf-8');
 const ast = esprima.parseScript(input);
@@ -142,6 +142,41 @@ function unminify(ast) { // {{{
 				operator: "!",
 				argument: T.Literal({ value: 1 }),
 			}))) return T.Literal({ value: false, raw: "false" });
+
+			if(test(node, T.CallExpression({
+				callee: T.MemberExpression({
+					object: T.Literal({ value: {[match]: v => typeof v === "string"} }),
+					property: Id.concat,
+				})
+			}))) {
+				return T.TemplateLiteral({
+					quasis: [
+						T.TemplateElement({ value: { raw: node.callee.object.value } }),
+						T.TemplateElement({ value: { raw: node.arguments[1]?.value ?? "" } }),
+					],
+					expressions: [
+						node.arguments[0],
+					],
+				})
+			}
+
+			if(test(node, T.CallExpression({
+				callee: T.MemberExpression({
+					object: T.TemplateLiteral,
+					property: Id.concat,
+				})
+			}))) {
+				return T.TemplateLiteral({
+					quasis: [
+						...node.callee.object.quasis,
+						T.TemplateElement({ value: { raw: node.arguments[1]?.value ?? "" } }),
+					],
+					expressions: [
+						...node.callee.object.expressions,
+						node.arguments[0],
+					],
+				})
+			}
 
 			if(node.type == "VariableDeclaration" && !node._is_for)
 				return T.BlockStatement({

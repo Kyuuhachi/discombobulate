@@ -38,7 +38,7 @@ function renameAll(scopes) {
 	}
 	let nscope = 0;
 	for(const scope of scopes) {
-		if(scope.type != "class") {
+		if(scope.type != "class" && scope.type != "TDZ") {
 			let scopeName = toExcelCol(nscope);
 			let nvar = 0;
 			for(let variable of scope.variables) {
@@ -64,7 +64,7 @@ function rename(variable, name) {
 function clean(ast) {
 	const {scopes} = escope.analyze(ast);
 	for(const scope of scopes) {
-		if(scope.type != "class") {
+		if(scope.type != "class" && scope.type != "TDZ") {
 			for(let variable of scope.variables) {
 				for(const def of variable.identifiers) {
 					if(def.variable) throw def;
@@ -208,10 +208,10 @@ function inferNames(ast) {
 			if(node.type == "ObjectPattern") {
 				// This one has a small risk of accidental shadowing.
 				for(const prop of node.properties) {
-					if(test(prop, T.Property({ value: Id }))) {
+					if(test(prop, T.Property({ key: Id, value: Id }))) {
 						rename(prop.value.variable, prop.key.name);
 						prop.shorthand = true;
-					} else if(T.Property({ value: T.AssignmentPattern({ left: Id }) })) {
+					} else if(test(prop, T.Property({ key: Id, value: T.AssignmentPattern({ left: Id }) }))) {
 						rename(prop.value.left.variable, prop.key.name);
 						prop.shorthand = true;
 					}
@@ -226,14 +226,16 @@ function inferNames(ast) {
 					if(!test(prop.value, T.FunctionExpression({
 						id: null,
 						params: [],
-						body: T.BlockStatement({ body: [T.ReturnStatement({ argument: Id })] })
+						body: T.BlockStatement({ body: [T.ReturnStatement] })
 					}))) throw prop;
 					let name = prop.key.name === "default" ? "_default" : prop.key.name;
-					let ident = prop.value.body.body[0].argument;
-					rename(ident.variable, name);
+					let ret = prop.value.body.body[0].argument;
+					if(ret.type == "Identifier") {
+						rename(ret.variable, name);
+					}
 					prop.value = T.ArrowFunctionExpression({
 						params: prop.value.params,
-						body: ident,
+						body: ret,
 						expression: true,
 					});
 				}

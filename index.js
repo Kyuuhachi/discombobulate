@@ -88,6 +88,7 @@ function clean(ast) {
 	}
 
 	unminify(ast);
+	restoreTemplates(ast);
 	inferNames(ast);
 	unjsx(ast);
 	unzero(ast);
@@ -142,41 +143,6 @@ function unminify(ast) { // {{{
 				operator: "!",
 				argument: T.Literal({ value: 1 }),
 			}))) return T.Literal({ value: false, raw: "false" });
-
-			if(test(node, T.CallExpression({
-				callee: T.MemberExpression({
-					object: T.Literal({ value: {[match]: v => typeof v === "string"} }),
-					property: Id.concat,
-				})
-			}))) {
-				return T.TemplateLiteral({
-					quasis: [
-						T.TemplateElement({ value: { raw: node.callee.object.value } }),
-						T.TemplateElement({ value: { raw: node.arguments[1]?.value ?? "" } }),
-					],
-					expressions: [
-						node.arguments[0],
-					],
-				})
-			}
-
-			if(test(node, T.CallExpression({
-				callee: T.MemberExpression({
-					object: T.TemplateLiteral,
-					property: Id.concat,
-				})
-			}))) {
-				return T.TemplateLiteral({
-					quasis: [
-						...node.callee.object.quasis,
-						T.TemplateElement({ value: { raw: node.arguments[1]?.value ?? "" } }),
-					],
-					expressions: [
-						...node.callee.object.expressions,
-						node.arguments[0],
-					],
-				})
-			}
 
 			if(node.type == "VariableDeclaration" && !node._is_for)
 				return T.BlockStatement({
@@ -235,6 +201,47 @@ function unminifyBlock(stmt, child, level) {
 	}
 }
 // }}}
+
+function restoreTemplates(ast) {
+	estraverse.replace(ast, {
+		leave(node) {
+			if(test(node, T.CallExpression({
+				callee: T.MemberExpression({
+					object: T.Literal({ value: {[match]: v => typeof v === "string"} }),
+					property: Id.concat,
+				})
+			}))) {
+				return T.TemplateLiteral({
+					quasis: [
+						T.TemplateElement({ value: { raw: node.callee.object.value } }),
+						T.TemplateElement({ value: { raw: node.arguments[1]?.value ?? "" } }),
+					],
+					expressions: [
+						node.arguments[0],
+					],
+				})
+			}
+
+			if(test(node, T.CallExpression({
+				callee: T.MemberExpression({
+					object: T.TemplateLiteral,
+					property: Id.concat,
+				})
+			}))) {
+				return T.TemplateLiteral({
+					quasis: [
+						...node.callee.object.quasis,
+						T.TemplateElement({ value: { raw: node.arguments[1]?.value ?? "" } }),
+					],
+					expressions: [
+						...node.callee.object.expressions,
+						node.arguments[0],
+					],
+				})
+			}
+		}
+	})
+}
 
 function inferNames(ast) {
 	let import_n = 0;

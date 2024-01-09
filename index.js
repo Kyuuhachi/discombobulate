@@ -326,19 +326,18 @@ function unjsx(ast) { // {{{
 	}
 
 	function toJsxName(node, top = true) {
-		switch(node.type) {
-			case "Literal":
-				return T.JSXIdentifier({ name: node.value })
-			case "MemberExpression":
-				node.type = "JSXMemberExpression";
-				node.object = toJsxName(node.object, false);
-				return node;
-			case "Identifier":
-				node.type = "JSXIdentifier"
-				if(top) node._jsx = true;
-				return node;
-			default:
-				throw node;
+		if(test(node, T.Literal)) {
+			return T.JSXIdentifier({ name: node.value })
+		} else if(test(node, T.MemberExpression({computed: false}))) {
+			node.type = "JSXMemberExpression";
+			node.object = toJsxName(node.object, false);
+			return node;
+		} else if(test(node, Id)) {
+			node.type = "JSXIdentifier"
+			if(top) node._jsx = true;
+			return node;
+		} else {
+			throw node;
 		}
 	}
 
@@ -405,21 +404,23 @@ function unjsx(ast) { // {{{
 		leave(node) {
 			const jsx = extractJsx(node);
 			if(jsx === undefined) return;
-			const [attributes, children] = getJsxAttributes(jsx[1]);
+			try {
+				const [attributes, children] = getJsxAttributes(jsx[1]);
 
-			// estraverse-fb doesn't support JSXFragment, so can't insert those
-			const name = toJsxName(jsx[1][0]);
-			return T.JSXElement({
-				openingElement: T.JSXOpeningElement({
-					attributes,
-					name,
-					selfClosing: children === undefined,
-				}),
-				children: children ?? [],
-				closingElement: children !== undefined ? T.JSXClosingElement({
-					name,
-				}) : null,
-			})
+				// estraverse-fb doesn't support JSXFragment, so can't insert those
+				const name = toJsxName(jsx[1][0]);
+				return T.JSXElement({
+					openingElement: T.JSXOpeningElement({
+						attributes,
+						name,
+						selfClosing: children === undefined,
+					}),
+					children: children ?? [],
+					closingElement: children !== undefined ? T.JSXClosingElement({
+						name,
+					}) : null,
+				})
+			} catch {}
 		}
 	})
 } // }}}

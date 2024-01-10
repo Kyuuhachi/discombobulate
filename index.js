@@ -55,10 +55,13 @@ function renameAll(scopes) {
 }
 
 function rename(variable, name) {
+	if(variable._renamed) return false;
+	if(name == "default") return false;
 	variable._renamed = true;
 	variable.name = name;
 	for(let def of variable.identifiers) def.name = name;
 	for(let ref of variable.references) ref.identifier.name = name;
+	return true;
 }
 
 function clean(ast) {
@@ -251,11 +254,11 @@ function inferNames(ast) {
 				// This one has a small risk of accidental shadowing.
 				for(const prop of node.properties) {
 					if(test(prop, T.Property({ key: Id, value: Id }))) {
-						rename(prop.value.variable, prop.key.name);
-						prop.shorthand = true;
+						if(rename(prop.value.variable, prop.key.name))
+							prop.shorthand = true;
 					} else if(test(prop, T.Property({ key: Id, value: T.AssignmentPattern({ left: Id }) }))) {
-						rename(prop.value.left.variable, prop.key.name);
-						prop.shorthand = true;
+						if(rename(prop.value.left.variable, prop.key.name))
+							prop.shorthand = true;
 					}
 				}
 			}

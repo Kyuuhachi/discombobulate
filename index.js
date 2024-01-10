@@ -54,8 +54,8 @@ function renameAll(scopes) {
 	}
 }
 
-function rename(variable, name) {
-	if(variable._renamed) return false;
+function rename(variable, name, force = false) {
+	if(variable._renamed && !force) return false;
 
 	let vars = [
 		...variable.scope.through.map(v => v.resolved),
@@ -266,8 +266,9 @@ function webpackModule(node) {
 				let decl = node.declarations[0];
 				let arg = decl.init.arguments[0];
 				if(arg.variable.isImport) {
-					rename(decl.id.variable, arg.name)
-					rename(arg.variable, arg.name + "_")
+					let name = arg.name;
+					rename(arg.variable, name + "_", true)
+					rename(decl.id.variable, name)
 					decl.id.variable.isImport = true;
 				}
 			}
@@ -478,7 +479,7 @@ function unjsx(ast) { // {{{
 	})
 	if(Object.values(factories).length !== 1) return ast;
 	const factory = Object.values(factories)[0];
-	rename(factory.variable, "React");
+	rename(factory.variable, "React", true);
 
 	estraverse.replace(ast, {
 		leave(node) {

@@ -56,12 +56,22 @@ function renameAll(scopes) {
 
 function rename(variable, name) {
 	if(variable._renamed) return false;
-	if(name == "default") return false;
+
+	let vars = [
+		...variable.scope.through.map(v => v.resolved),
+		...variable.scope.set.values(),
+	].filter(v => v);
+	let rawName = name;
+	let n = 0;
+	while(name == "default" || vars.find(v => v.name == name)) {
+		name = rawName + (n++);
+	}
+
 	variable._renamed = true;
 	variable.name = name;
 	for(let def of variable.identifiers) def.name = name;
 	for(let ref of variable.references) ref.identifier.name = name;
-	return true;
+	return name == rawName;
 }
 
 function clean(ast) {

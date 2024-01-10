@@ -93,6 +93,7 @@ function clean(ast) {
 	unminify(ast);
 	restoreTemplates(ast);
 	inferNames(ast);
+	foldDestructures(ast);
 	unjsx(ast);
 	unzero(ast);
 	renameAll(scopes);
@@ -309,6 +310,23 @@ function inferNames(ast) {
 				rename(decl.id.variable, arg.name)
 				rename(arg.variable, arg.name + "_")
 				decl.id.variable.isImport = true;
+			}
+		}
+	})
+}
+
+function foldDestructures(ast) {
+	estraverse.replace(ast, {
+		enter(node) {
+			if(test(node, T.VariableDeclaration({declarations: [{
+				id: T.ObjectPattern,
+				init: Id,
+			}] })) && node.declarations[0].init.variable.references.length == 1) {
+				Object.assign(
+					node.declarations[0].init.variable.identifiers[0],
+					node.declarations[0].id,
+				);
+				this.remove();
 			}
 		}
 	})

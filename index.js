@@ -85,13 +85,9 @@ function clean(ast) {
 		}
 	}
 
-	const topargs = scopes[1].variables.filter(v => v.defs[0]?.type == "Parameter");
-	for(const i in topargs) {
-		rename(topargs[i], ["module", "exports", "require"][i])
-	}
-
 	unminify(ast);
 	restoreTemplates(ast);
+	webpack(ast);
 	inferNames(ast);
 	foldDestructures(ast);
 	unjsx(ast);
@@ -205,6 +201,25 @@ function unminifyBlock(stmt, child, level) {
 	}
 }
 // }}}
+
+function webpack(ast) {
+	if(test(ast, T.Program({
+		body: [ T.ExpressionStatement({
+			expression: T.AssignmentExpression({
+				left: T.MemberExpression({
+					computed: true,
+					object: Id.webpack,
+				}),
+				right: T.FunctionExpression,
+			})
+		}) ]
+	}))) {
+		const [_module, _exports, _require] = ast.body[0].expression.right.params;
+		_module && rename(_module.variable, "module");
+		_exports && rename(_exports.variable, "exports");
+		_require && rename(_require.variable, "require");
+	}
+}
 
 function restoreTemplates(ast) {
 	estraverse.replace(ast, {

@@ -97,11 +97,13 @@ function clean(ast) {
 
 	unminify(ast);
 	restoreTemplates(ast);
-	webpack(ast);
-	inferNames(ast);
+	const isWebpack = webpack(ast);
 	foldDestructures(ast);
-	unjsx(ast);
+	if(isWebpack) {
+		unjsx(ast);
+	}
 	unzero(ast);
+	inferNames(ast);
 	renameAll(scopes);
 }
 
@@ -225,6 +227,9 @@ function webpack(ast) {
 		}) ]
 	}))) {
 		webpackModule(ast.body[0].expression.right);
+		return true;
+	} else {
+		return false;
 	}
 }
 
@@ -349,6 +354,17 @@ function inferNames(ast) {
 							prop.shorthand = true;
 					}
 				}
+			}
+			if(test(node, T.JSXSpreadAttribute({ argument: Id }))) {
+				rename(node.argument.variable, "props");
+			}
+			if(test(node, T.JSXAttribute({
+				name: T.JSXIdentifier,
+				value: T.JSXExpressionContainer({
+					expression: Id,
+				})
+			}))) {
+				rename(node.value.expression.variable, node.name.name);
 			}
 		}
 	})

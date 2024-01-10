@@ -214,11 +214,73 @@ function webpack(ast) {
 			})
 		}) ]
 	}))) {
-		const [_module, _exports, _require] = ast.body[0].expression.right.params;
-		_module && rename(_module.variable, "module");
-		_exports && rename(_exports.variable, "exports");
-		_require && rename(_require.variable, "require");
+		webpackModule(ast.body[0].expression.right);
 	}
+}
+
+function webpackModule(node) {
+	const [_module, _exports, _require] = node.params;
+	_module && rename(_module.variable, "module");
+	_exports && rename(_exports.variable, "exports");
+	_require && rename(_require.variable, "require");
+
+	const isRequire = { [match]: v => v.type == "Identifier" && v.variable === _require?.variable };
+
+	let import_n = 0;
+	estraverse.traverse(ast, {
+		enter(node) {
+			if(test(node, T.VariableDeclaration({ declarations: [{
+				init: T.CallExpression({ callee: isRequire, arguments: [T.Literal] })
+			}] }))) {
+				let decl = node.declarations[0];
+				if(!decl.id.variable._renamed) {
+					rename(decl.id.variable, "_" + import_n++)
+					decl.id.variable.isImport = true;
+				}
+			}
+
+			if(test(node, T.VariableDeclaration({
+				declarations: [{
+					init: T.CallExpression({
+						callee: T.MemberExpression({ object: isRequire, property: Id.n }),
+						arguments: [Id],
+					})
+				}]
+			}))) {
+				let decl = node.declarations[0];
+				let arg = decl.init.arguments[0];
+				if(arg.variable.isImport) {
+					rename(decl.id.variable, arg.name)
+					rename(arg.variable, arg.name + "_")
+					decl.id.variable.isImport = true;
+				}
+			}
+
+			if(test(node, T.CallExpression({
+				callee: T.MemberExpression({ object: isRequire, property: Id.d, }),
+				arguments: [ Id.exports, T.ObjectExpression ]
+			}))) {
+				for(const prop of node.arguments[1].properties) {
+					if(!test(prop.value, T.FunctionExpression({
+						id: null,
+						params: [],
+						body: T.BlockStatement({ body: [T.ReturnStatement] })
+					}))) throw prop;
+					let name = prop.key.name === "default" ? "_default" : prop.key.name;
+					let ret = prop.value.body.body[0].argument;
+					if(ret.type == "Identifier") {
+						rename(ret.variable, name);
+					}
+					prop.value = T.ArrowFunctionExpression({
+						params: prop.value.params,
+						body: ret,
+						expression: true,
+					});
+				}
+			}
+
+		}
+	})
 }
 
 function restoreTemplates(ast) {
@@ -277,54 +339,6 @@ function inferNames(ast) {
 							prop.shorthand = true;
 					}
 				}
-			}
-
-			if(test(node, T.CallExpression({
-				callee: T.MemberExpression({ object: Id.require, property: Id.d, }),
-				arguments: [ Id.exports, T.ObjectExpression ]
-			}))) {
-				for(const prop of node.arguments[1].properties) {
-					if(!test(prop.value, T.FunctionExpression({
-						id: null,
-						params: [],
-						body: T.BlockStatement({ body: [T.ReturnStatement] })
-					}))) throw prop;
-					let name = prop.key.name === "default" ? "_default" : prop.key.name;
-					let ret = prop.value.body.body[0].argument;
-					if(ret.type == "Identifier") {
-						rename(ret.variable, name);
-					}
-					prop.value = T.ArrowFunctionExpression({
-						params: prop.value.params,
-						body: ret,
-						expression: true,
-					});
-				}
-			}
-
-			if(test(node, T.VariableDeclaration({ declarations: [{
-				init: T.CallExpression({ callee: Id.require, arguments: [T.Literal] })
-			}] }))) {
-				let decl = node.declarations[0];
-				if(!decl.id.variable._renamed) {
-					rename(decl.id.variable, "_" + import_n++)
-					decl.id.variable.isImport = true;
-				}
-			}
-
-			if(test(node, T.VariableDeclaration({
-				declarations: [{
-					init: T.CallExpression({
-						callee: T.MemberExpression({ object: Id.require, property: Id.n }),
-						arguments: [Id],
-					})
-				}]
-			}))) {
-				let decl = node.declarations[0];
-				let arg = decl.init.arguments[0];
-				rename(decl.id.variable, arg.name)
-				rename(arg.variable, arg.name + "_")
-				decl.id.variable.isImport = true;
 			}
 		}
 	})

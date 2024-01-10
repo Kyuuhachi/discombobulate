@@ -105,6 +105,7 @@ function clean(ast) {
 	unzero(ast);
 	inferNames(ast);
 	renameAll(scopes);
+	objectShorthand(ast);
 }
 
 function unminify(ast) { // {{{
@@ -340,18 +341,15 @@ function restoreTemplates(ast) {
 }
 
 function inferNames(ast) {
-	let import_n = 0;
 	estraverse.traverse(ast, {
 		enter(node) {
 			if(node.type == "ObjectPattern") {
 				// This one has a small risk of accidental shadowing.
 				for(const prop of node.properties) {
 					if(test(prop, T.Property({ key: Id, value: Id }))) {
-						if(rename(prop.value.variable, prop.key.name))
-							prop.shorthand = true;
+						rename(prop.value.variable, prop.key.name)
 					} else if(test(prop, T.Property({ key: Id, value: T.AssignmentPattern({ left: Id }) }))) {
-						if(rename(prop.value.left.variable, prop.key.name))
-							prop.shorthand = true;
+						rename(prop.value.left.variable, prop.key.name)
 					}
 				}
 			}
@@ -510,4 +508,22 @@ function unjsx(ast) { // {{{
 
 function unzero(ast) {
 	estraverse.replace(ast, { enter: extractZero })
+}
+
+function objectShorthand(ast) {
+	estraverse.traverse(ast, {
+		enter(node) {
+			if(node.type == "ObjectPattern" || node.type == "ObjectExpression") {
+				for(const prop of node.properties) {
+					if(test(prop, T.Property({ key: Id, value: Id }))) {
+						if(prop.value.name == prop.key.name)
+							prop.shorthand = true;
+					} else if(test(prop, T.Property({ key: Id, value: T.AssignmentPattern({ left: Id }) }))) {
+						if(prop.value.left.name == prop.key.name)
+							prop.shorthand = true;
+					}
+				}
+			}
+		}
+	})
 }

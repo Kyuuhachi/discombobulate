@@ -343,8 +343,7 @@ function restoreTemplates(ast) {
 function inferNames(ast) {
 	estraverse.traverse(ast, {
 		enter(node) {
-			if(node.type == "ObjectPattern") {
-				// This one has a small risk of accidental shadowing.
+			if(node.type == "ObjectPattern" || node.type == "ObjectExpression") {
 				for(const prop of node.properties) {
 					if(test(prop, T.Property({ key: Id, value: Id }))) {
 						rename(prop.value.variable, prop.key.name)

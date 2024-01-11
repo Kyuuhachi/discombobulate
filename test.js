@@ -37,7 +37,7 @@ export const T = new Proxy({}, {
 
 export const Id = new Proxy({[match]: v => v.type == "Identifier"}, {
 	get(target, name) {
-		return target[name] ?? { ...target, name }
+		return target[name] ?? T.Identifier({name})
 	}
 });
 

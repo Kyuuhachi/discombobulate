@@ -19,7 +19,7 @@ clean(ast);
 
 prettier.format(escodegen.generate(ast, { format: { escapeless: true } }), {
 	parser: "babel",
-	printWidth: 120,
+	printWidth: 98,
 	useTabs: true,
 }).then(output => fs.writeFileSync(process.stdout.fd, output))
 
@@ -56,6 +56,7 @@ function renameAll(scopes) {
 
 function rename(variable, name, force = false) {
 	if(variable._renamed && !force) return false;
+	if(!/^[_a-zA-Z]\w*$/.test(name)) return false;
 
 	let vars = [
 		...variable.scope.through.map(v => v.resolved),
@@ -75,7 +76,7 @@ function rename(variable, name, force = false) {
 }
 
 function clean(ast) {
-	const {scopes} = escope.analyze(ast);
+	const {scopes} = escope.analyze(ast, { ecmaVersion: 6 });
 	for(const scope of scopes) {
 		if(scope.type != "class" && scope.type != "TDZ") {
 			for(let variable of scope.variables) {
@@ -246,6 +247,7 @@ function webpackModule(node) {
 	estraverse.traverse(ast, {
 		enter(node) {
 			if(test(node, T.VariableDeclaration({ declarations: [{
+				id: Id,
 				init: T.CallExpression({ callee: isRequire, arguments: [T.Literal] })
 			}] }))) {
 				let decl = node.declarations[0];

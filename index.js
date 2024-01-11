@@ -45,11 +45,26 @@ function renameAll(scopes) {
 				if(variable.tainted) continue;
 				if(!variable.defs.length) continue;
 				if(variable._renamed) continue;
-				const isJsx = variable.references.find(c => c.identifier._jsx);
-				let name = (isJsx ? scopeName.toUpperCase() : scopeName) + nvar++;
-				rename(variable, name)
+				rename(variable, scopeName + nvar++)
 			}
 			if(nvar != 0) nscope += 1;
+		}
+	}
+}
+
+function renameJsx(scopes) {
+	for(const scope of scopes) {
+		if(scope.type != "class" && scope.type != "TDZ") {
+			for(let variable of scope.variables) {
+				if(variable.jsx) {
+					let fst = variable.name.charAt(0);
+					if(fst != fst.toUpperCase()) {
+						rename(variable, fst.toUpperCase() + variable.name.slice(1), true);
+					} else if(fst == fst.toLowerCase()) {
+						rename(variable, "C" + variable.name, true);
+					}
+				}
+			}
 		}
 	}
 }
@@ -106,6 +121,9 @@ function clean(ast) {
 	unzero(ast);
 	inferNames(ast);
 	renameAll(scopes);
+	if(isWebpack) {
+		renameJsx(scopes);
+	}
 	objectShorthand(ast);
 }
 
@@ -411,13 +429,13 @@ function unjsx(ast) { // {{{
 	function toJsxName(node, top = true) {
 		if(test(node, T.Literal)) {
 			return T.JSXIdentifier({ name: node.value })
-		} else if(test(node, T.MemberExpression({computed: false}))) {
+		} else if(test(node, T.MemberExpression({ computed: false }))) {
 			node.type = "JSXMemberExpression";
 			node.object = toJsxName(node.object, false);
 			return node;
 		} else if(test(node, Id)) {
 			node.type = "JSXIdentifier"
-			if(top) node._jsx = true;
+			if(top && node.variable) node.variable.jsx = true;
 			return node;
 		} else {
 			throw node;

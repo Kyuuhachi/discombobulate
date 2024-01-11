@@ -163,6 +163,16 @@ function unminify(ast) { // {{{
 				case "ForStatement":        return unminifyBlock(node, "init", 0);
 				case "ForInStatement":      return unminifyBlock(node, "right", 0);
 			}
+
+			if(test(node, T.ArrowFunctionExpression({ body: T.SequenceExpression }))) {
+				return {
+					...node,
+					body: T.BlockStatement({ body: [
+						T.ReturnStatement({ argument: node.body }),
+					] }),
+					expression: false,
+				}
+			}
 		},
 
 		leave(node) {
@@ -189,6 +199,26 @@ function unminify(ast) { // {{{
 				node.consequent = node.consequent.length == 0 ? [] : [T.BlockStatement({
 					body: node.consequent.flatMap(n => n._fake_block ? n.body : [n]),
 				})];
+
+			if(test(node, T.ArrowFunctionExpression({
+				body: T.BlockStatement({ body: [ T.ReturnStatement ] })
+			}))) {
+				return {
+					...node,
+					body: node.body.body[0].argument,
+					expression: true,
+				}
+			}
+
+			if(test(node, T.ArrowFunctionExpression({
+				body: T.BlockStatement({ body: [ T.ExpressionStatement ] })
+			}))) {
+				return {
+					...node,
+					body: node.body.body[0].expression,
+					expression: true,
+				}
+			}
 		}
 	});
 }

@@ -2,10 +2,8 @@
   "name": "jsclean",
   "main": "index.js",
   "type": "module",
-  "scripts": {
-    "run": "node index.js"
-  },
   "dependencies": {
+    "commander": "^11.1.0",
     "escodegen-wallaby": "^1.6.42",
     "escope": "^4.0.0",
     "esprima-next": "^6.0.2",

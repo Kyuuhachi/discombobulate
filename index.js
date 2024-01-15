@@ -13,15 +13,20 @@ import * as prettier   from "prettier";
 import {test, Id, T, match} from "./test.js";
 
 const input = fs.readFileSync(process.stdin.fd, 'utf-8');
-const ast = esprima.parseScript(input);
-
-clean(ast);
-
-prettier.format(escodegen.generate(ast, { format: { escapeless: true } }), {
+const output = cleanString(input);
+prettier.format(output, {
 	parser: "babel",
 	printWidth: 98,
 	useTabs: true,
-}).then(output => fs.writeFileSync(process.stdout.fd, output))
+}).then(output => {
+	fs.writeFileSync(process.stdout.fd, output);
+})
+
+function cleanString(source) {
+	const ast = esprima.parseScript(input);
+	clean(ast);
+	return escodegen.generate(ast, { format: { escapeless: true } })
+}
 
 function renameAll(scopes) {
 	function toExcelCol(n) {

@@ -97,7 +97,7 @@ function clean(ast) {
 			for(let variable of scope.variables) {
 				for(const def of variable.identifiers) {
 					if(def.variable) throw def;
-					def.variable = variable;
+					Object.defineProperty(def, "variable", { value: variable, enumerable: false });
 				}
 				for(const ref of variable.references) {
 					if(ref.identifier.variable !== undefined
@@ -105,7 +105,7 @@ function clean(ast) {
 					) {
 						throw ref;
 					}
-					ref.identifier.variable = variable;
+					Object.defineProperty(ref.identifier, "variable", { value: variable, enumerable: false });
 				}
 			}
 		}

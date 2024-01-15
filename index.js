@@ -70,7 +70,7 @@ function renameJsx(scopes) {
 }
 
 function rename(variable, name, force = false) {
-	if(variable._renamed && !force) return false;
+	if(!variable || variable._renamed && !force) return false;
 	if(!/^[_a-zA-Z]\w*$/.test(name)) return false;
 
 	let vars = [
@@ -158,6 +158,7 @@ function unminify(ast) { // {{{
 			switch(node.type) {
 				case "ExpressionStatement": return unminifyBlock(node, "expression", 2);
 				case "ReturnStatement":     return unminifyBlock(node, "argument", 1);
+				case "ThrowStatement":      return unminifyBlock(node, "argument", 1);
 				case "IfStatement":         return unminifyBlock(node, "test", 0);
 				case "SwitchStatement":     return unminifyBlock(node, "discriminant", 0);
 				case "ForStatement":        return unminifyBlock(node, "init", 0);
@@ -285,9 +286,9 @@ function webpack(ast) {
 
 function webpackModule(node) {
 	const [_module, _exports, _require] = node.params;
-	_module && rename(_module.variable, "module");
-	_exports && rename(_exports.variable, "exports");
-	_require && rename(_require.variable, "require");
+	rename(_module?.variable, "module");
+	rename(_exports?.variable, "exports");
+	rename(_require?.variable, "require");
 
 	const isRequire = { [match]: v => v.type == "Identifier" && v.variable === _require?.variable };
 
@@ -421,15 +422,19 @@ function inferNames(ast) {
 function foldDestructures(ast) {
 	estraverse.replace(ast, {
 		enter(node) {
+			// This could possibly be wrong with var/let.
 			if(test(node, T.VariableDeclaration({declarations: [{
 				id: T.ObjectPattern,
 				init: Id,
-			}] })) && node.declarations[0].init.variable.references.length == 1) {
-				Object.assign(
-					node.declarations[0].init.variable.identifiers[0],
-					node.declarations[0].id,
-				);
-				this.remove();
+			}] }))) {
+				const decl = node.declarations[0];
+				if(decl.init.variable.references.filter(r => r.isRead()).length == 1) {
+					Object.assign(
+						decl.init.variable.identifiers[0],
+						decl.id,
+					);
+					this.remove();
+				}
 			}
 		}
 	})

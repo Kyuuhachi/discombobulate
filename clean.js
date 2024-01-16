@@ -170,7 +170,8 @@ const commaVisitor = (() => {
 		if(node.container.type == "ForStatement" && node.key == "init") {
 			node = node.parentPath;
 		}
-		node.parentPath.assertBlockStatement();
+		if(node.parent.type != "SwitchCase")
+			node.parentPath.assertBlockStatement();
 		return node;
 	}
 	function commaInner(node, key) {

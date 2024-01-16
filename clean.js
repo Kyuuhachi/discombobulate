@@ -34,6 +34,7 @@ export function clean(ast) {
 		addBlockVisitor,
 		commaVisitor,
 		conditionalVisitor,
+		nullCoalesceVisitor,
 		optionalParameterVisitor,
 		objectParameterVisitor,
 		restParameterVisitor,
@@ -212,8 +213,7 @@ const commaVisitor = (() => {
 	}
 })();
 
-// This is buggy — do not use until fixed
-const nullCoalesce = (() => {
+const nullCoalesceVisitor = (() => {
 	return {
 		ConditionalExpression(path) {
 			if(test(path, t.conditionalExpression(
@@ -245,8 +245,7 @@ const nullCoalesce = (() => {
 				if(bind != binding(c)) return;
 				if(bind.path.parent.kind !== "var") return;
 				if(bind.path.node.init !== null) return;
-				// For some reason removing this node breaks a lot of things
-				// bind.path.remove();
+				bind.path.remove();
 				path.replaceWith(t.logicalExpression(
 					"??",
 					path.get("test.left.right.right").node,

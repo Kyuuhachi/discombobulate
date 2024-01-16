@@ -349,12 +349,12 @@ const objectParameterVisitor = (() => {
 					node.replaceWith(left);
 					path.remove();
 					scope.crawl();
+					scope.path.requeue(bind.path);
 				}
 			}
 		}
 	};
 })();
-
 
 const restParameterVisitor = (() => {
 	const arglen = t.memberExpression(Id.arguments, Id.length);

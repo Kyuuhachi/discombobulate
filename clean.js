@@ -480,15 +480,9 @@ const inferNamesVisitor = (() => {
 	return {
 		"ObjectPattern|ObjectExpression"(path) {
 			for(const prop of path.get("properties")) {
-				if(test(prop, T.ObjectProperty({
-					key: T.Identifier,
-					value: T.Identifier,
-				}))) {
+				if(test(prop, t.objectProperty(T.Identifier, T.Identifier))) {
 					rename(prop.get("value"), prop.node.key.name)
-				} else if(test(prop, T.ObjectProperty({
-					key: T.Identifier,
-					value: T.AssignmentPattern({ left: T.Identifier }),
-				}))) {
+				} else if(test(prop, t.objectProperty(T.Identifier, t.assignmentPattern(T.Identifier, T.Expression)))) {
 					rename(prop.get("value.left"), prop.node.key.name)
 				}
 			}
@@ -515,16 +509,10 @@ const propertyShorthandVisitor = (() => {
 	return {
 		"ObjectPattern|ObjectExpression"(path) {
 			for(const prop of path.get("properties")) {
-				if(test(prop, T.ObjectProperty({
-					key: T.Identifier,
-					value: T.Identifier,
-				}))) {
+				if(test(prop, t.objectProperty(T.Identifier, T.Identifier))) {
 					if(prop.node.value.name == prop.node.key.name)
 						prop.node.shorthand = true;
-				} else if(test(prop, T.ObjectProperty({
-					key: T.Identifier,
-					value: T.AssignmentPattern({ left: T.Identifier }),
-				}))) {
+				} else if(test(prop, t.objectProperty(T.Identifier, t.assignmentPattern(T.Identifier, T.Expression)))) {
 					if(prop.node.value.left.name == prop.node.key.name)
 						prop.node.shorthand = true;
 				}

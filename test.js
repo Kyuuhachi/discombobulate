@@ -47,6 +47,7 @@ export const T = new Proxy(_ => { throw new Error("T is not a pattern"); }, {
 
 export const Id = new Proxy(path => path.isReferencedIdentifier(), {
 	get(target, name) {
+		if(name == "type") return "Identifier";
 		if(typeof name !== "string") return undefined;
 		return T.Identifier({ name })
 	}

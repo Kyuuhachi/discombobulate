@@ -18,22 +18,31 @@ function eq(a, b) {
 }
 
 export function clean(ast) {
-	BTraverse.default(ast, {}); // This initializes something
+	let n = 0;
+	BTraverse.default(ast, { enter(path) {
+		if(path.node == path.scope.block) {
+			for(const k in path.scope.bindings) {
+				path.scope.rename(k, "v" + n++);
+			}
+		}
+	} })
 	const root = BTraverse.NodePath.get({ parent: ast, container: ast, key: "program" });
 
-	root.traverse(BTraverse.visitors.merge([
+	BTraverse.default(ast, BTraverse.visitors.merge([
 		zeroVisitor,
 		booleanVisitor,
 		addBlockVisitor,
 		commaVisitor,
 		conditionalVisitor,
 		optionalParameterVisitor,
+		objectParameterVisitor,
 		restParameterVisitor,
 	]));
 
+	root.scope.crawl();
 	webpack(root);
-	root.traverse(inferNamesVisitor);
-	root.traverse(propertyShorthandVisitor);
+	BTraverse.default(ast, inferNamesVisitor);
+	BTraverse.default(ast, propertyShorthandVisitor);
 
 	// 2015 parameters
 	//      template-literals
@@ -326,6 +335,26 @@ const optionalParameterVisitor = (() => {
 		} }
 	};
 })();
+
+const objectParameterVisitor = (() => {
+	return {
+		VariableDeclarator(path) {
+			if(test(path, t.variableDeclarator(T.ObjectPattern, Id)) && path.parent.kind == "let") {
+				let bind = binding(path.get("init"));
+				if(bind.references == 1) {
+					let scope = bind.scope;
+					let node = bind.path;
+					if(node.isVariableDeclarator()) node = node.get("id");
+					let left = path.node.id;
+					node.replaceWith(left);
+					path.remove();
+					scope.crawl();
+				}
+			}
+		}
+	};
+})();
+
 
 const restParameterVisitor = (() => {
 	const arglen = t.memberExpression(Id.arguments, Id.length);

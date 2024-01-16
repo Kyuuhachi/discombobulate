@@ -21,17 +21,18 @@ export function clean(ast) {
 	BTraverse.default(ast, {}); // This initializes something
 	const root = BTraverse.NodePath.get({ parent: ast, container: ast, key: "program" });
 
-	zero(root);
-
-	boolean(root);
-	addBlock(root);
-	comma(root);
-	conditional(root);
-	restParameter(root);
+	root.traverse(BTraverse.visitors.merge([
+		zeroVisitor,
+		booleanVisitor,
+		addBlockVisitor,
+		commaVisitor,
+		conditionalVisitor,
+		restParameterVisitor,
+	]));
 
 	webpack(root);
-	inferNames(root);
-	propertyShorthand(root);
+	root.traverse(inferNamesVisitor);
+	root.traverse(propertyShorthandVisitor);
 
 	// 2015 parameters
 	//      template-literals
@@ -112,8 +113,8 @@ function binding(path) {
 	return path.scope.getBinding(path.node.name);
 }
 
-function zero(path) {
-	path.traverse({
+const zeroVisitor = (() => {
+	return {
 		SequenceExpression(path) {
 			if(test(path, T.SequenceExpression({
 				expressions: [
@@ -128,11 +129,11 @@ function zero(path) {
 				path.replaceWith(path.get("expressions.1"))
 			}
 		},
-	})
-}
+	}
+})();
 
-function boolean(path) {
-	path.traverse({
+const booleanVisitor = (() => {
+	return {
 		UnaryExpression(path) {
 			if(test(path, T.UnaryExpression({
 				operator: "!",
@@ -144,16 +145,16 @@ function boolean(path) {
 				argument: T.NumericLiteral({ value: 1 }),
 			}))) path.replaceWith(T.BooleanLiteral({ value: false }));
 		},
-	})
-}
+	}
+})();
 
-function addBlock(path) {
+const addBlockVisitor = (() => {
 	function inner(path) {
 		if(path.node && !path.isBlockStatement()) {
 			path.replaceWith(t.blockStatement([path.node]));
 		}
 	}
-	path.traverse({
+	return {
 		IfStatement(path) {
 			inner(path.get("consequent"));
 			inner(path.get("alternate"));
@@ -161,10 +162,10 @@ function addBlock(path) {
 		"Loop|WithStatement|LabeledStatement"(path) {
 			inner(path.get("body"));
 		},
-	})
-}
+	}
+})();
 
-function comma(path) {
+const commaVisitor = (() => {
 	function containerOf(node) {
 		if(node.container.type == "ForStatement" && node.key == "init") {
 			node = node.parentPath;
@@ -181,7 +182,7 @@ function comma(path) {
 		}
 	}
 
-	path.traverse({
+	return {
 		VariableDeclaration(path) {
 			const decls = path.node.declarations;
 			if(decls.length > 1) {
@@ -196,35 +197,35 @@ function comma(path) {
 		SwitchStatement(path)     { commaInner(path, "discriminant"); },
 		ForStatement(path)        { commaInner(path, "init"); },
 		ForInStatement(path)      { commaInner(path, "right"); },
-	})
-}
+	}
+})();
 
-function conditional(path) {
-	path.traverse({
+const conditionalVisitor = (() => {
+	return {
 		ExpressionStatement(path) {
 			let expr = path.get("expression");
 			if(expr.isConditionalExpression()) {
-				path.replaceWith(t.IfStatement(
+				path.replaceWith(t.ifStatement(
 					expr.node.test,
-					t.blockStatement([t.expressionStatement(expr.node.consequent)]),
-					t.blockStatement([t.expressionStatement(expr.node.alternate)]),
+					t.expressionStatement(expr.node.consequent),
+					t.expressionStatement(expr.node.alternate),
 				))
 			} else if(expr.isLogicalExpression({ operator: "&&" })) {
-				path.replaceWith(t.IfStatement(
+				path.replaceWith(t.ifStatement(
 					expr.node.left,
-					t.blockStatement([t.expressionStatement(expr.node.right)]),
+					t.expressionStatement(expr.node.right),
 				))
 			} else if(expr.isLogicalExpression({ operator: "||" })) {
-				path.replaceWith(t.IfStatement(
-					t.UnaryExpression("!", expr.node.left),
-					t.blockStatement([t.expressionStatement(expr.node.right)]),
+				path.replaceWith(t.ifStatement(
+					t.unaryExpression("!", expr.node.left),
+					t.expressionStatement(expr.node.right),
 				))
 			}
 		},
-	})
-}
+	}
+})();
 
-function restParameter(path) {
+const restParameterVisitor = (() => {
 	const arglen = t.memberExpression(Id.arguments, Id.length);
 
 	function addRest(state) {
@@ -263,7 +264,7 @@ function restParameter(path) {
 		},
 	}
 
-	path.traverse({
+	return {
 		Function(path) {
 			if(!path.isArrowFunctionExpression()) {
 				path.traverse(visitor, {
@@ -273,8 +274,8 @@ function restParameter(path) {
 				});
 			}
 		}
-	});
-}
+	};
+})();
 
 function webpack(root) {
 	if(test(root, T.Program({
@@ -366,8 +367,8 @@ function webpackModule(node) {
 	})
 }
 
-function inferNames(node) {
-	node.traverse({
+const inferNamesVisitor = (() => {
+	return {
 		"ObjectPattern|ObjectExpression"(path) {
 			for(const prop of path.get("properties")) {
 				if(test(prop, T.ObjectProperty({
@@ -398,11 +399,11 @@ function inferNames(node) {
 				rename(path.get("value.expression"), path.node.name.name);
 			}
 		}
-	})
-}
+	}
+})();
 
-function propertyShorthand(node) {
-	node.traverse({
+const propertyShorthandVisitor = (() => {
+	return {
 		"ObjectPattern|ObjectExpression"(path) {
 			for(const prop of path.get("properties")) {
 				if(test(prop, T.ObjectProperty({
@@ -420,8 +421,8 @@ function propertyShorthand(node) {
 				}
 			}
 		}
-	})
-}
+	}
+})();
 
 /*
 function renameAll(scopes) {

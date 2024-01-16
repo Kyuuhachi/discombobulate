@@ -27,6 +27,7 @@ export function clean(ast) {
 		addBlockVisitor,
 		commaVisitor,
 		conditionalVisitor,
+		optionalParameterVisitor,
 		restParameterVisitor,
 	]));
 
@@ -226,6 +227,60 @@ const conditionalVisitor = (() => {
 	}
 })();
 
+const optionalParameterVisitor = (() => {
+	const arglen = t.memberExpression(Id.arguments, Id.length);
+
+	function addRest(state) {
+		if(!state.rest) {
+			state.rest = state.func.scope.generateUidIdentifier("rest");
+			state.func.pushContainer("params", t.restElement(state.rest));
+		}
+		return t.cloneNode(state.rest);
+	}
+
+	const visitor = {
+		Function(path, state) { if(!path.isArrowFunctionExpression()) path.skip(); },
+
+		ConditionalExpression(path, state) {
+			if(!state) return;
+		},
+	}
+
+	return {
+		Function: { exit(path) {
+			if(!path.isArrowFunctionExpression()) {
+				for(const node of path.get("body.body")) {
+					if(!node.isVariableDeclaration()) break;
+					let decl = node.get("declarations.0");
+					let expr = node.get("declarations.0.init");
+
+					let num = path.node.params.length;
+					const rhs = t.memberExpression(Id.arguments, t.numericLiteral(num), true);
+					const lhs = t.logicalExpression(
+						"&&",
+						t.binaryExpression(">", arglen, t.numericLiteral(num)),
+						t.binaryExpression(
+							"!==",
+							t.unaryExpression("void", t.numericLiteral(0)),
+							rhs,
+						),
+					);
+
+					if(test(expr, t.conditionalExpression(lhs, rhs, T.Expression))) {
+						path.pushContainer("params", t.assignmentPattern(decl.node.id, expr.node.alternate));
+						node.remove();
+					} else if(test(expr, t.logicalExpression("&&", lhs, rhs))) {
+						path.pushContainer("params", t.assignmentPattern(decl.node.id, t.booleanLiteral(false)));
+						node.remove();
+					} else {
+						// todo break
+					}
+				};
+			}
+		} }
+	};
+})();
+
 const restParameterVisitor = (() => {
 	const arglen = t.memberExpression(Id.arguments, Id.length);
 
@@ -266,7 +321,7 @@ const restParameterVisitor = (() => {
 	}
 
 	return {
-		Function(path) {
+		Function: { exit(path) {
 			if(!path.isArrowFunctionExpression()) {
 				path.traverse(visitor, {
 					func: path,
@@ -274,7 +329,7 @@ const restParameterVisitor = (() => {
 					rest: null,
 				});
 			}
-		}
+		} }
 	};
 })();
 

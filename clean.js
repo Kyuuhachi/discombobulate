@@ -82,8 +82,9 @@ function rename(path, name, { prio = 0 } = {}) {
 	if(!path.node) return;
 	path.assertIdentifier();
 	if(name == "default") name += "_";
-	if(binding(path)._renamePrio ?? -1 < prio) {
-		binding(path)._renamePrio = prio;
+	let bind = binding(path);
+	if(bind._renamePrio ?? -1 < prio) {
+		bind._renamePrio = prio;
 		path.scope.rename(path.node.name, name);
 	}
 }
@@ -405,64 +406,43 @@ function webpackModule(node) {
 	rename(_require, "require");
 
 	const requireBinding = binding(_require);
-	const Require = T.ReferencedIdentifier({ [match]: path => binding(path) == requireBinding });
+	const Require = T.Identifier({ [match]: path => binding(path) == requireBinding });
 
 	let import_n = 0;
 	node.get("body.body").forEach(node => {
-		if(test(node, T.VariableDeclaration({ declarations: [T.VariableDeclarator({
-			id: T.Identifier,
-			init: T.CallExpression({
-				callee: Require,
-				arguments: [T.StringLiteral]
-			})
-		})] }))) {
-			binding(node.get("declarations.0.id"))._import = true;
-			rename(node.get("declarations.0.id"), "_" + import_n++, { prio: 1000 });
+		if(test(node, t.variableDeclaration("var", [ t.variableDeclarator(T.Identifier, T.Expression) ]))) {
+			const decl = node.get("declarations.0");
+
+			if(test(decl.get("init"), t.callExpression(Require, [T.StringLiteral]))) {
+				binding(decl.get("id"))._import = true;
+				rename(decl.get("id"), "_" + import_n++, { prio: 1000 });
+			}
+
+			if(test(decl.get("init"), t.callExpression(t.memberExpression(Require, Id.n), [Id]))) {
+				const inner = decl.get("init.arguments.0");
+				if(binding(inner)._import) {
+					let name = inner.node.name;
+					rename(inner, name + "_", { prio: 1001 });
+					binding(decl.get("id"))._import = true;
+					rename(decl.get("id"), name, { prio: 1000 });
+				}
+			}
 		}
 
-		// if(test(node, T.VariableDeclaration({
-		// 	declarations: [{
-		// 		init: T.CallExpression({
-		// 			callee: T.MemberExpression({ object: isRequire, property: Id.n }),
-		// 			arguments: [Id],
-		// 		})
-		// 	}]
-		// }))) {
-		// 	let decl = node.declarations[0];
-		// 	let arg = decl.init.arguments[0];
-		// 	if(arg.variable.isImport) {
-		// 		let name = arg.name;
-		// 		rename(arg.variable, name + "_", true)
-		// 		rename(decl.id.variable, name)
-		// 		decl.id.variable.isImport = true;
-		// 	}
-		// }
-
-		if(test(node, T.ExpressionStatement({
-			expression: T.CallExpression({
-				callee: T.MemberExpression({ object: Require, property: Id.d, }),
-				arguments: [ Id.exports, T.ObjectExpression ]
-			}),
-		}))) {
+		if(test(node, t.expressionStatement(
+			t.callExpression(t.memberExpression(Require, Id.d), [ Id.exports, T.ObjectExpression ]),
+		))) {
 			for(const prop of node.get("expression.arguments.1.properties")) {
-				if(!test(prop, T.ObjectProperty({
-					value: T.FunctionExpression({
-						id: null,
-						params: [],
-						body: T.BlockStatement({ body: [T.ReturnStatement] })
-					}),
-				}))) throw prop.node;
+				if(!test(prop, t.objectProperty(T.Identifier,
+					t.functionExpression(null, [], t.blockStatement([ t.returnStatement() ])),
+				))) throw prop.node;
 				let name = prop.get("key.name").node;
 				if(name === "default") name = "_default";
 				let ret = prop.get("value.body.body.0.argument");
 				if(ret.isReferencedIdentifier()) {
 					rename(ret, name, { prio: 1000 });
 				}
-				prop.get("value").replaceWith(T.ArrowFunctionExpression({
-					params: [],
-					body: ret.node,
-					expression: true,
-				}))
+				prop.get("value").replaceWith(t.arrowFunctionExpression([], ret.node))
 			}
 		}
 	})

@@ -202,6 +202,51 @@ const commaVisitor = (() => {
 	}
 })();
 
+// This is buggy — do not use until fixed
+const nullCoalesce = (() => {
+	return {
+		ConditionalExpression(path) {
+			if(test(path, t.conditionalExpression(
+				t.logicalExpression(
+					"&&",
+					t.binaryExpression(
+						"!==",
+						t.nullLiteral(),
+						t.assignmentExpression(
+							"=",
+							T.Identifier,
+							T.Expression
+						),
+					),
+					t.binaryExpression(
+						"!==",
+						t.unaryExpression("void", t.numericLiteral(0)),
+						Id,
+					),
+				),
+				Id,
+				T.Expression,
+			))) {
+				let a = path.get("test.left.right.left");
+				let b = path.get("test.right.right");
+				let c = path.get("consequent");
+				let bind = binding(a);
+				if(bind != binding(b)) return;
+				if(bind != binding(c)) return;
+				if(bind.path.parent.kind !== "var") return;
+				if(bind.path.node.init !== null) return;
+				// For some reason removing this node breaks a lot of things
+				// bind.path.remove();
+				path.replaceWith(t.logicalExpression(
+					"??",
+					path.get("test.left.right.right").node,
+					path.get("alternate").node
+				))
+			}
+		},
+	}
+})();
+
 const conditionalVisitor = (() => {
 	return {
 		ExpressionStatement(path) {

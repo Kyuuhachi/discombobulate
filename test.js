@@ -1,43 +1,54 @@
+import BTraverse from "@babel/traverse";
+import * as t  from "@babel/types";
+
 export const match = Symbol("match");
 
-export function test(a, b) {
-	if(((typeof b == "object" && b !== null) || typeof b == "function") && b[match]) return b[match](a)
-
-	if(typeof a != typeof b) return false;
-	if(b == null) return a == null;
-	if(a == null) return false;
-
-	if(Array.isArray(b)) {
-		if(!Array.isArray(a)) return false;
-		if(b.length != a.length) return false;
-		for(let i = 0; i < b.length; i++)
-			if(!test(a[i], b[i])) return false;
+export function test(value, filter) {
+	if(filter === undefined) {
+		throw new Error("null filter");
+	} else if(filter === null) {
 		return true;
-	}
-	
-	if(typeof a == "object") {
-		for(const [key, value] of Object.entries(b))
-			if(!test(a[key], value))
-				return false;
+		return value.node === filter;
+	} else if(Object.getPrototypeOf(filter) == Function.prototype && !filter[match]) {
+		return filter(value);
+	} else if(Array.isArray(filter)) {
+		if(!Array.isArray(value)) return false;
+		if(value.length !== filter.length) return false;
+		for(const k in filter) {
+			if(!test(value[k], filter[k])) return false;
+		}
 		return true;
+	} else if(Object.getPrototypeOf(filter) == Object.prototype) {
+		let { type, [match]: match_, ...props } = filter;
+		if(!(value instanceof BTraverse.NodePath)) return false;
+		if(type && !value["is"+type]()) return false;
+		for(const k in props) {
+			if(!test(value.get(k), props[k])) return false;
+		}
+		return !match_ || match_.call(filter, value);
+	} else if(filter[match]) {
+		return filter[match](value)
+	} else {
+		return value.node === filter;
 	}
-
-	return a === b;
 };
 
-export const T = new Proxy({}, {
+export const T = new Proxy(_ => { throw new Error("T is not a pattern"); }, {
 	get(target, type) {
-		let v = function(props) {
-			return { type, ...props }
-		}
-		v[match] = v => v.type == type;
+		if(typeof type !== "string") return undefined;
+		function v(props = {}) {
+			return { type, ...props };
+		};
+		v[match] = value => test(value, { type });
+		v.type = type;
 		return v
 	}
 });
 
-export const Id = new Proxy({[match]: v => v.type == "Identifier"}, {
+export const Id = new Proxy(path => path.isReferencedIdentifier(), {
 	get(target, name) {
-		return target[name] ?? T.Identifier({name})
+		if(typeof name !== "string") return undefined;
+		return T.Identifier({ name })
 	}
 });
 

@@ -1,16 +1,429 @@
-import * as esprima    from "esprima-next";
-import * as estraverse from "estraverse-fb";
-import * as escope     from "escope";
-import * as escodegen  from "escodegen-wallaby";
+import BParser    from "@babel/parser";
+import BTraverse  from "@babel/traverse";
+import BGenerator from "@babel/generator";
+import * as t     from "@babel/types";
 
 import {test, Id, T, match} from "./test.js";
 
+const traverse = BTraverse.default;
+
 export function cleanString(source) {
-	const ast = esprima.parseScript(source);
+	const ast = BParser.parse(source);
 	clean(ast);
-	return escodegen.generate(ast, { format: { escapeless: true } })
+	return BGenerator.default(ast).code
 }
 
+function eq(a, b) {
+	return BGenerator.default(a.node).code === BGenerator.default(b.node).code;
+}
+
+export function clean(ast) {
+	BTraverse.default(ast, {}); // This initializes something
+	const root = BTraverse.NodePath.get({ parent: ast, container: ast, key: "program" });
+
+	zero(root);
+
+	boolean(root);
+	addBlock(root);
+	comma(root);
+	conditional(root);
+	restParameter(root);
+
+	webpack(root);
+	inferNames(root);
+	propertyShorthand(root);
+
+	// 2015 parameters
+	//      template-literals
+	//      literals
+	//      shorthand-properties
+	// 2020 nullish-coalescing-operator
+	//      optional-chaining
+
+	// const {scopes} = escope.analyze(ast, { ecmaVersion: 6 });
+	// for(const scope of scopes) {
+	// 	if(scope.type != "class" && scope.type != "TDZ") {
+	// 		for(let variable of scope.variables) {
+	// 			for(const def of variable.identifiers) {
+	// 				if(def.variable) throw def;
+	// 				Object.defineProperty(def, "variable", { value: variable, enumerable: false });
+	// 			}
+	// 			for(const ref of variable.references) {
+	// 				if(ref.identifier.variable !== undefined
+	// 					&& !Object.is(ref.identifier.variable, variable)
+	// 				) {
+	// 					throw ref;
+	// 				}
+	// 				Object.defineProperty(ref.identifier, "variable", { value: variable, enumerable: false });
+	// 			}
+	// 		}
+	// 	}
+	// }
+	//
+	// unminify(ast);
+	// restoreTemplates(ast);
+	// const isWebpack = webpack(ast);
+	// foldDestructures(ast);
+	// if(isWebpack) {
+	// 	unjsx(ast);
+	// }
+	// unzero(ast);
+	// inferNames(ast);
+	// renameAll(scopes);
+	// if(isWebpack) {
+	// 	renameJsx(scopes);
+	// }
+	// objectShorthand(ast);
+}
+
+function rename(path, name, { prio = 0 } = {}) {
+	if(!path.node) return;
+	path.assertIdentifier();
+	if(name == "default") name += "_";
+	if(binding(path)._renamePrio ?? -1 < prio) {
+		binding(path)._renamePrio = prio;
+		path.scope.rename(path.node.name, name);
+	}
+}
+
+// function rename(variable, name, force = false) {
+// 	if(!variable || variable._renamed && !force) return false;
+// 	if(!/^[_a-zA-Z]\w*$/.test(name)) return false;
+//
+// 	let vars = [
+// 		...variable.scope.through.map(v => v.resolved),
+// 		...variable.scope.set.values(),
+// 	].filter(v => v);
+// 	let rawName = name;
+// 	let n = 0;
+// 	while(name == "default" || vars.find(v => v.name == name)) {
+// 		name = rawName + (n++);
+// 	}
+//
+// 	variable._renamed = true;
+// 	variable.name = name;
+// 	for(let def of variable.identifiers) def.name = name;
+// 	for(let ref of variable.references) ref.identifier.name = name;
+// 	return name == rawName;
+// }
+
+function binding(path) {
+	path.assertIdentifier();
+	return path.scope.getBinding(path.node.name);
+}
+
+function zero(path) {
+	path.traverse({
+		SequenceExpression(path) {
+			if(test(path, T.SequenceExpression({
+				expressions: [
+					T.NumericLiteral({ value: 0, }),
+					T.MemberExpression({
+						computed: false,
+						object: Id,
+						property: T.Identifier,
+					}),
+				],
+			}))) {
+				path.replaceWith(path.get("expressions.1"))
+			}
+		},
+	})
+}
+
+function boolean(path) {
+	path.traverse({
+		UnaryExpression(path) {
+			if(test(path, T.UnaryExpression({
+				operator: "!",
+				argument: T.NumericLiteral({ value: 0 }),
+			}))) path.replaceWith(T.BooleanLiteral({ value: true }));
+
+			if(test(path, T.UnaryExpression({
+				operator: "!",
+				argument: T.NumericLiteral({ value: 1 }),
+			}))) path.replaceWith(T.BooleanLiteral({ value: false }));
+		},
+	})
+}
+
+function addBlock(path) {
+	function inner(path) {
+		if(path.node && !path.isBlockStatement()) {
+			path.replaceWith(t.blockStatement([path.node]));
+		}
+	}
+	path.traverse({
+		IfStatement(path) {
+			inner(path.get("consequent"));
+			inner(path.get("alternate"));
+		},
+		"Loop|WithStatement|LabeledStatement"(path) {
+			inner(path.get("body"));
+		},
+	})
+}
+
+function comma(path) {
+	function containerOf(node) {
+		if(node.container.type == "ForStatement" && node.key == "init") {
+			node = node.parentPath;
+		}
+		node.parentPath.assertBlockStatement();
+		return node;
+	}
+	function commaInner(node, key) {
+		const expr = node.get(key);
+		if(expr.isSequenceExpression()) {
+			const exprs = expr.node.expressions;
+			expr.replaceWith(exprs.pop());
+			containerOf(node).insertBefore(exprs.map(t.expressionStatement));
+		}
+	}
+
+	path.traverse({
+		VariableDeclaration(path) {
+			const decls = path.node.declarations;
+			if(decls.length > 1) {
+				path.node.declarations = [decls.pop()];
+				containerOf(path).insertBefore(decls.map(decl => t.variableDeclaration(path.node.kind, [decl])));
+			}
+		},
+		ExpressionStatement(path) { commaInner(path, "expression"); },
+		ReturnStatement(path)     { commaInner(path, "argument"); },
+		ThrowStatement(path)      { commaInner(path, "argument"); },
+		IfStatement(path)         { commaInner(path, "test"); },
+		SwitchStatement(path)     { commaInner(path, "discriminant"); },
+		ForStatement(path)        { commaInner(path, "init"); },
+		ForInStatement(path)      { commaInner(path, "right"); },
+	})
+}
+
+function conditional(path) {
+	path.traverse({
+		ExpressionStatement(path) {
+			let expr = path.get("expression");
+			if(expr.isConditionalExpression()) {
+				path.replaceWith(t.IfStatement(
+					expr.node.test,
+					t.blockStatement([t.expressionStatement(expr.node.consequent)]),
+					t.blockStatement([t.expressionStatement(expr.node.alternate)]),
+				))
+			} else if(expr.isLogicalExpression({ operator: "&&" })) {
+				path.replaceWith(t.IfStatement(
+					expr.node.left,
+					t.blockStatement([t.expressionStatement(expr.node.right)]),
+				))
+			} else if(expr.isLogicalExpression({ operator: "||" })) {
+				path.replaceWith(t.IfStatement(
+					t.UnaryExpression("!", expr.node.left),
+					t.blockStatement([t.expressionStatement(expr.node.right)]),
+				))
+			}
+		},
+	})
+}
+
+function restParameter(path) {
+	const arglen = t.memberExpression(Id.arguments, Id.length);
+
+	function addRest(state) {
+		if(!state.rest) {
+			state.rest = state.func.scope.generateUidIdentifier("rest");
+			state.func.pushContainer("params", t.restElement(state.rest));
+		}
+		return t.cloneNode(state.rest);
+	}
+
+	const visitor = {
+		Function(path, state) { if(!path.isArrowFunctionExpression()) path.skip(); },
+
+		ConditionalExpression(path, state) {
+			if(!state) return;
+
+			if(test(path, t.conditionalExpression(
+				t.binaryExpression("<=", arglen, state.nargs),
+				t.numericLiteral(0),
+				t.binaryExpression("-", arglen, state.nargs),
+			))) {
+				path.replaceWith(t.memberExpression(addRest(state), Id.length));
+			}
+
+			if(test(path, t.conditionalExpression(
+				t.binaryExpression("<=", arglen, t.binaryExpression("+", T.Expression, state.nargs)),
+				t.unaryExpression("void", t.numericLiteral(0)),
+				t.memberExpression(Id.arguments, t.binaryExpression("+", T.Expression, state.nargs), true),
+			))) {
+				let a = path.get("test.right.left");
+				let b = path.get("alternate.property.left");
+				if(eq(a, b)) {
+					path.replaceWith(t.memberExpression(addRest(state), a.node, true));
+				}
+			}
+		},
+	}
+
+	path.traverse({
+		Function(path) {
+			if(!path.isArrowFunctionExpression()) {
+				path.traverse(visitor, {
+					func: path,
+					nargs: t.numericLiteral(path.node.params.length),
+					rest: null,
+				});
+			}
+		}
+	});
+}
+
+function webpack(root) {
+	if(test(root, T.Program({
+		body: [ T.ExpressionStatement({
+			expression: T.AssignmentExpression({
+				left: T.MemberExpression({
+					computed: true,
+					object: Id.webpack,
+					property: T.StringLiteral
+				}),
+				right: T.FunctionExpression,
+			})
+		}) ]
+	}))) {
+		webpackModule(root.get("body.0.expression.right"));
+		return true;
+	} else {
+		return false;
+	}
+}
+
+function webpackModule(node) {
+	const [_module, _exports, _require] = node.get("params");
+	rename(_module, "module");
+	rename(_exports, "exports");
+	rename(_require, "require");
+
+	const requireBinding = binding(_require);
+	const Require = T.ReferencedIdentifier({ [match]: path => binding(path) == requireBinding });
+
+	let import_n = 0;
+	node.get("body.body").forEach(node => {
+		if(test(node, T.VariableDeclaration({ declarations: [T.VariableDeclarator({
+			id: T.Identifier,
+			init: T.CallExpression({
+				callee: Require,
+				arguments: [T.StringLiteral]
+			})
+		})] }))) {
+			binding(node.get("declarations.0.id"))._import = true;
+			rename(node.get("declarations.0.id"), "_" + import_n++, { prio: 1000 });
+		}
+
+		// if(test(node, T.VariableDeclaration({
+		// 	declarations: [{
+		// 		init: T.CallExpression({
+		// 			callee: T.MemberExpression({ object: isRequire, property: Id.n }),
+		// 			arguments: [Id],
+		// 		})
+		// 	}]
+		// }))) {
+		// 	let decl = node.declarations[0];
+		// 	let arg = decl.init.arguments[0];
+		// 	if(arg.variable.isImport) {
+		// 		let name = arg.name;
+		// 		rename(arg.variable, name + "_", true)
+		// 		rename(decl.id.variable, name)
+		// 		decl.id.variable.isImport = true;
+		// 	}
+		// }
+
+		if(test(node, T.ExpressionStatement({
+			expression: T.CallExpression({
+				callee: T.MemberExpression({ object: Require, property: Id.d, }),
+				arguments: [ Id.exports, T.ObjectExpression ]
+			}),
+		}))) {
+			for(const prop of node.get("expression.arguments.1.properties")) {
+				if(!test(prop, T.ObjectProperty({
+					value: T.FunctionExpression({
+						id: null,
+						params: [],
+						body: T.BlockStatement({ body: [T.ReturnStatement] })
+					}),
+				}))) throw prop.node;
+				let name = prop.get("key.name").node;
+				if(name === "default") name = "_default";
+				let ret = prop.get("value.body.body.0.argument");
+				if(ret.isReferencedIdentifier()) {
+					rename(ret, name, { prio: 1000 });
+				}
+				prop.get("value").replaceWith(T.ArrowFunctionExpression({
+					params: [],
+					body: ret.node,
+					expression: true,
+				}))
+			}
+		}
+	})
+}
+
+function inferNames(node) {
+	node.traverse({
+		"ObjectPattern|ObjectExpression"(path) {
+			for(const prop of path.get("properties")) {
+				if(test(prop, T.ObjectProperty({
+					key: T.Identifier,
+					value: T.Identifier,
+				}))) {
+					rename(prop.get("value"), prop.node.key.name)
+				} else if(test(prop, T.ObjectProperty({
+					key: T.Identifier,
+					value: T.AssignmentPattern({ left: T.Identifier }),
+				}))) {
+					rename(prop.get("value.left"), prop.node.key.name)
+				}
+			}
+		},
+		JSXSpreadAttribute(path) {
+			if(test(path, T.JSXAttribute({ argument: Id }))) {
+				rename(path.get("argument"), "props");
+			}
+		},
+		JSXAttribute(path) {
+			if(test(path, T.JSXAttribute({
+				name: T.JSXIdentifier,
+				value: T.JSXExpressionContainer({
+					expression: Id,
+				})
+			}))) {
+				rename(path.get("value.expression"), path.node.name.name);
+			}
+		}
+	})
+}
+
+function propertyShorthand(node) {
+	node.traverse({
+		"ObjectPattern|ObjectExpression"(path) {
+			for(const prop of path.get("properties")) {
+				if(test(prop, T.ObjectProperty({
+					key: T.Identifier,
+					value: T.Identifier,
+				}))) {
+					if(prop.node.value.name == prop.node.key.name)
+						prop.node.shorthand = true;
+				} else if(test(prop, T.ObjectProperty({
+					key: T.Identifier,
+					value: T.AssignmentPattern({ left: T.Identifier }),
+				}))) {
+					if(prop.node.value.left.name == prop.node.key.name)
+						prop.node.shorthand = true;
+				}
+			}
+		}
+	})
+}
+
+/*
 function renameAll(scopes) {
 	function toExcelCol(n) {
 		n += 1;
@@ -57,294 +470,14 @@ function renameJsx(scopes) {
 	}
 }
 
-function rename(variable, name, force = false) {
-	if(!variable || variable._renamed && !force) return false;
-	if(!/^[_a-zA-Z]\w*$/.test(name)) return false;
-
-	let vars = [
-		...variable.scope.through.map(v => v.resolved),
-		...variable.scope.set.values(),
-	].filter(v => v);
-	let rawName = name;
-	let n = 0;
-	while(name == "default" || vars.find(v => v.name == name)) {
-		name = rawName + (n++);
-	}
-
-	variable._renamed = true;
-	variable.name = name;
-	for(let def of variable.identifiers) def.name = name;
-	for(let ref of variable.references) ref.identifier.name = name;
-	return name == rawName;
-}
-
-export function clean(ast) {
-	const {scopes} = escope.analyze(ast, { ecmaVersion: 6 });
-	for(const scope of scopes) {
-		if(scope.type != "class" && scope.type != "TDZ") {
-			for(let variable of scope.variables) {
-				for(const def of variable.identifiers) {
-					if(def.variable) throw def;
-					Object.defineProperty(def, "variable", { value: variable, enumerable: false });
-				}
-				for(const ref of variable.references) {
-					if(ref.identifier.variable !== undefined
-						&& !Object.is(ref.identifier.variable, variable)
-					) {
-						throw ref;
-					}
-					Object.defineProperty(ref.identifier, "variable", { value: variable, enumerable: false });
-				}
-			}
-		}
-	}
-
-	unminify(ast);
-	restoreTemplates(ast);
-	const isWebpack = webpack(ast);
-	foldDestructures(ast);
-	if(isWebpack) {
-		unjsx(ast);
-	}
-	unzero(ast);
-	inferNames(ast);
-	renameAll(scopes);
-	if(isWebpack) {
-		renameJsx(scopes);
-	}
-	objectShorthand(ast);
-}
-
-function unminify(ast) { // {{{
-	estraverse.replace(ast, {
-		enter(node) {
-			switch(node.type) {
-				case "ForStatement":
-					// TODO do something about multiple declarations in for headers
-					if(node.init != null && node.init.type == "VariableDeclaration")
-						node.init._is_for = true;
-					break;
-				case "ForInStatement":
-				case "ForOfStatement":
-					if(node.left.type == "VariableDeclaration")
-						node.left._is_for = true;
-					break;
-			}
-
-			if(test(node, T.ReturnStatement({
-				argument: T.UnaryExpression({ operator: "void" }),
-			}))) {
-				return T.BlockStatement({
-					_fake_block: true,
-					body: [
-						T.ExpressionStatement({ expression: node.argument.argument }),
-						T.ReturnStatement({ argument: null }),
-					]
-				});
-			}
-
-			switch(node.type) {
-				case "ExpressionStatement": return unminifyBlock(node, "expression", 2);
-				case "ReturnStatement":     return unminifyBlock(node, "argument", 1);
-				case "ThrowStatement":      return unminifyBlock(node, "argument", 1);
-				case "IfStatement":         return unminifyBlock(node, "test", 0);
-				case "SwitchStatement":     return unminifyBlock(node, "discriminant", 0);
-				case "ForStatement":        return unminifyBlock(node, "init", 0);
-				case "ForInStatement":      return unminifyBlock(node, "right", 0);
-			}
-
-			if(test(node, T.ArrowFunctionExpression({ body: T.SequenceExpression }))) {
-				return {
-					...node,
-					body: T.BlockStatement({ body: [
-						T.ReturnStatement({ argument: node.body }),
-					] }),
-					expression: false,
-				}
-			}
-		},
-
-		leave(node) {
-			if(test(node, T.UnaryExpression({
-				operator: "!",
-				argument: T.Literal({ value: 0 }),
-			}))) return T.Literal({ value: true, raw: "true" });
-
-			if(test(node, T.UnaryExpression({
-				operator: "!",
-				argument: T.Literal({ value: 1 }),
-			}))) return T.Literal({ value: false, raw: "false" });
-
-			if(node.type == "VariableDeclaration" && !node._is_for)
-				return T.BlockStatement({
-					_fake_block: true,
-					body: node.declarations.map(d => Object.assign({}, node, {declarations: [d]})),
-				});
-
-			if(node.type == "BlockStatement" || node.type == "Program")
-				node.body = node.body.flatMap(n => n._fake_block ? n.body : [n]);
-
-			if(node.type == "SwitchCase")
-				node.consequent = node.consequent.length == 0 ? [] : [T.BlockStatement({
-					body: node.consequent.flatMap(n => n._fake_block ? n.body : [n]),
-				})];
-
-			if(test(node, T.ArrowFunctionExpression({
-				body: T.BlockStatement({ body: [ T.ReturnStatement ] })
-			}))) {
-				return {
-					...node,
-					body: node.body.body[0].argument,
-					expression: true,
-				}
-			}
-
-			if(test(node, T.ArrowFunctionExpression({
-				body: T.BlockStatement({ body: [ T.ExpressionStatement ] })
-			}))) {
-				return {
-					...node,
-					body: node.body.body[0].expression,
-					expression: true,
-				}
-			}
-		}
-	});
-}
-
-function unminifyBlock(stmt, child, level) {
-	if(stmt[child] === null) return;
-
-	if(level >= 0 && stmt[child].type == "SequenceExpression") {
-		const newStmt = T.BlockStatement({
-			_fake_block: true,
-			body: [],
-		});
-		while(stmt[child].expressions.length > 1) {
-			newStmt.body.push(T.ExpressionStatement({
-				expression: stmt[child].expressions.shift(),
-			}));
-		}
-		stmt[child] = stmt[child].expressions[0];
-		newStmt.body.push(stmt);
-		return newStmt;
-	}
-
-	if(level >= 1 && stmt[child].type == "ConditionalExpression") {
-		const {test, consequent, alternate} = stmt[child];
-		return T.IfStatement({
-			test: test,
-			consequent: Object.assign({}, stmt, {[child]: consequent}),
-			alternate:  Object.assign({}, stmt, {[child]: alternate}),
-		});
-	}
-
-	if(level >= 2 && stmt[child].type == "LogicalExpression") {
-		const {operator, left, right} = stmt[child];
-		return T.IfStatement({
-			test: operator == "||" ? T.UnaryExpression({
-				operator: "!",
-				argument: left,
-			}) : left,
-			consequent: Object.assign({}, stmt, {[child]: right}),
-			alternate:  null,
-		});
-	}
-}
 // }}}
-
-function webpack(ast) {
-	if(test(ast, T.Program({
-		body: [ T.ExpressionStatement({
-			expression: T.AssignmentExpression({
-				left: T.MemberExpression({
-					computed: true,
-					object: Id.webpack,
-				}),
-				right: T.FunctionExpression,
-			})
-		}) ]
-	}))) {
-		webpackModule(ast.body[0].expression.right);
-		return true;
-	} else {
-		return false;
-	}
-}
-
-function webpackModule(node) {
-	const [_module, _exports, _require] = node.params;
-	rename(_module?.variable, "module");
-	rename(_exports?.variable, "exports");
-	rename(_require?.variable, "require");
-
-	const isRequire = { [match]: v => v.type == "Identifier" && v.variable === _require?.variable };
-
-	let import_n = 0;
-	estraverse.traverse(node, {
-		enter(node) {
-			if(test(node, T.VariableDeclaration({ declarations: [{
-				id: Id,
-				init: T.CallExpression({ callee: isRequire, arguments: [T.Literal] })
-			}] }))) {
-				let decl = node.declarations[0];
-				if(!decl.id.variable._renamed) {
-					rename(decl.id.variable, "_" + import_n++)
-					decl.id.variable.isImport = true;
-				}
-			}
-
-			if(test(node, T.VariableDeclaration({
-				declarations: [{
-					init: T.CallExpression({
-						callee: T.MemberExpression({ object: isRequire, property: Id.n }),
-						arguments: [Id],
-					})
-				}]
-			}))) {
-				let decl = node.declarations[0];
-				let arg = decl.init.arguments[0];
-				if(arg.variable.isImport) {
-					let name = arg.name;
-					rename(arg.variable, name + "_", true)
-					rename(decl.id.variable, name)
-					decl.id.variable.isImport = true;
-				}
-			}
-
-			if(test(node, T.CallExpression({
-				callee: T.MemberExpression({ object: isRequire, property: Id.d, }),
-				arguments: [ Id.exports, T.ObjectExpression ]
-			}))) {
-				for(const prop of node.arguments[1].properties) {
-					if(!test(prop.value, T.FunctionExpression({
-						id: null,
-						params: [],
-						body: T.BlockStatement({ body: [T.ReturnStatement] })
-					}))) throw prop;
-					let name = prop.key.name === "default" ? "_default" : prop.key.name;
-					let ret = prop.value.body.body[0].argument;
-					if(ret.type == "Identifier") {
-						rename(ret.variable, name);
-					}
-					prop.value = T.ArrowFunctionExpression({
-						params: prop.value.params,
-						body: ret,
-						expression: true,
-					});
-				}
-			}
-
-		}
-	})
-}
 
 function restoreTemplates(ast) {
 	estraverse.replace(ast, {
 		leave(node) {
 			if(test(node, T.CallExpression({
 				callee: T.MemberExpression({
-					object: T.Literal({ value: {[match]: v => typeof v === "string"} }),
+					object: T.StringLiteral,
 					property: Id.concat,
 				})
 			}))) {
@@ -380,33 +513,6 @@ function restoreTemplates(ast) {
 	})
 }
 
-function inferNames(ast) {
-	estraverse.traverse(ast, {
-		enter(node) {
-			if(node.type == "ObjectPattern" || node.type == "ObjectExpression") {
-				for(const prop of node.properties) {
-					if(test(prop, T.Property({ key: Id, value: Id }))) {
-						rename(prop.value.variable, prop.key.name)
-					} else if(test(prop, T.Property({ key: Id, value: T.AssignmentPattern({ left: Id }) }))) {
-						rename(prop.value.left.variable, prop.key.name)
-					}
-				}
-			}
-			if(test(node, T.JSXSpreadAttribute({ argument: Id }))) {
-				rename(node.argument.variable, "props");
-			}
-			if(test(node, T.JSXAttribute({
-				name: T.JSXIdentifier,
-				value: T.JSXExpressionContainer({
-					expression: Id,
-				})
-			}))) {
-				rename(node.value.expression.variable, node.name.name);
-			}
-		}
-	})
-}
-
 function foldDestructures(ast) {
 	estraverse.replace(ast, {
 		enter(node) {
@@ -428,16 +534,6 @@ function foldDestructures(ast) {
 	})
 }
 
-function extractZero(node) {
-	if(test(node, T.SequenceExpression({
-		expressions: [
-			T.Literal({ value: 0 }),
-			T.MemberExpression({ computed: false, object: Id, property: Id }),
-		],
-	})) && node.expressions[1].object.variable.isImport)
-		return node.expressions[1];
-}
-
 function unjsx(ast) { // {{{
 	function extractJsx(node) {
 		if(node.type !== "CallExpression") return;
@@ -450,7 +546,7 @@ function unjsx(ast) { // {{{
 	}
 
 	function toJsxName(node, top = true) {
-		if(test(node, T.Literal)) {
+		if(test(node, T.StringLiteral)) {
 			return T.JSXIdentifier({ name: node.value })
 		} else if(test(node, T.MemberExpression({ computed: false }))) {
 			node.type = "JSXMemberExpression";
@@ -469,7 +565,7 @@ function unjsx(ast) { // {{{
 		let children = undefined;
 		let attributes = [];
 		for(const item of props.properties) {
-			if(item.type == "Property" && !item.computed) {
+			if(item.type == "ObjectProperty" && !item.computed) {
 				if(item.key.name == "children") {
 					children = toJsxChildren(item.value);
 				} else {
@@ -549,25 +645,4 @@ function unjsx(ast) { // {{{
 	})
 } // }}}
 
-function unzero(ast) {
-	estraverse.replace(ast, { enter: extractZero })
-}
-
-function objectShorthand(ast) {
-	estraverse.traverse(ast, {
-		enter(node) {
-			if(node.type == "ObjectPattern" || node.type == "ObjectExpression") {
-				for(const prop of node.properties) {
-					if(test(prop, T.Property({ key: Id, value: Id }))) {
-						if(prop.value.name == prop.key.name)
-							prop.shorthand = true;
-					} else if(test(prop, T.Property({ key: Id, value: T.AssignmentPattern({ left: Id }) }))) {
-						if(prop.value.left.name == prop.key.name)
-							prop.shorthand = true;
-					}
-				}
-			}
-		}
-	})
-}
-
+*/

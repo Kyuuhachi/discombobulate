@@ -41,7 +41,9 @@ export function clean(ast) {
 	]));
 
 	root.scope.crawl();
-	webpack(root);
+	if(webpack(root)) {
+		jsx(ast);
+	}
 	BTraverse.default(ast, inferNamesVisitor);
 	BTraverse.default(ast, propertyShorthandVisitor);
 
@@ -90,6 +92,7 @@ export function clean(ast) {
 
 function rename(path, name, { prio = 0 } = {}) {
 	if(!path.node) return;
+	if(!/^[_a-zA-Z]\w*$/.test(name)) return false;
 	path.assertIdentifier();
 	if(name == "default") name += "_";
 	let bind = binding(path);
@@ -488,17 +491,12 @@ const inferNamesVisitor = (() => {
 			}
 		},
 		JSXSpreadAttribute(path) {
-			if(test(path, T.JSXAttribute({ argument: Id }))) {
+			if(test(path, t.jsxSpreadAttribute(Id))) {
 				rename(path.get("argument"), "props");
 			}
 		},
 		JSXAttribute(path) {
-			if(test(path, T.JSXAttribute({
-				name: T.JSXIdentifier,
-				value: T.JSXExpressionContainer({
-					expression: Id,
-				})
-			}))) {
+			if(test(path, t.jsxAttribute(T.JSXIdentifier, t.jsxExpressionContainer(Id)))) {
 				rename(path.get("value.expression"), path.node.name.name);
 			}
 		}
@@ -520,6 +518,111 @@ const propertyShorthandVisitor = (() => {
 		}
 	}
 })();
+
+function jsx(ast) {
+	function isJsx(path) {
+		return test(path, T.CallExpression({
+			callee: t.memberExpression(
+				T.Identifier({ [match]: p => binding(p)?._import }),
+				T.Identifier({ name: n => n == "jsx" || n == "jsxs" }),
+			),
+			arguments: v => v.length <= 3,
+		}))
+	}
+	function findReact(ast) {
+		let state = new Set();
+		BTraverse.default(ast, {
+			CallExpression(path) {
+				if(isJsx(path)) {
+					state.add(binding(path.get("callee.object")))
+				}
+			}
+		});
+		return state.size == 1 ? [...state][0] : null
+	}
+	let react = findReact(ast);
+	if(!react) return;
+	react.path.assertVariableDeclarator();
+	rename(react.path.get("id"), "React", { prio: 2000 });
+
+	function jsxName(name, top = true) {
+		if(test(name, T.StringLiteral)) {
+			return t.jsxIdentifier(name.node.value);
+		} else if(test(name, T.MemberExpression({ computed: false }))) {
+			return t.jsxMemberExpression(
+				jsxName(name.get("object"), false),
+				jsxName(name.get("property")),
+			);
+		} else if(test(name, T.Identifier)) {
+			if(top && binding(name)) binding(name)._jsx = true;
+			return t.jsxIdentifier(name.node.name);
+		} else {
+			console.error(name.node);
+			throw new Error("invalid jsxName");
+		}
+	}
+
+	function jsxAttributes(props, key) {
+		let children = undefined;
+		let attributes = [];
+		for(const item of props.get("properties")) {
+			if(item.type == "ObjectProperty" && !item.node.computed) {
+				if(item.node.key.name == "children") {
+					children = jsxChildren(item.node.value);
+				} else {
+					attributes.push(T.JSXAttribute({
+						name: jsxName(item.get("key")),
+						value: T.JSXExpressionContainer({ expression: item.node.value }),
+					}));
+				}
+			} else if(item.type == "SpreadElement") {
+				attributes.push(t.jsxSpreadAttribute(item.node.argument));
+			} else {
+				throw new Error("invalid jsxAttributes");
+			}
+		}
+		if(key) {
+			attributes.push(t.jsxAttribute(
+				t.jsxIdentifier("key"),
+				t.jsxExpressionContainer(key.node),
+			))
+		}
+		return [attributes, children]
+	}
+
+	function jsxChildren(child) {
+		switch(child.type) {
+			case "ArrayExpression":
+				return child.elements.map(child => {
+					switch(child.type) {
+						case "JSXElement":
+							return child;
+						default:
+							return t.jsxExpressionContainer(child)
+					}
+				});
+			case "JSXElement":
+				return [ child ];
+			default:
+				return [ t.jsxExpressionContainer(child) ]
+		}
+	}
+
+	BTraverse.default(ast, {
+		CallExpression: { exit(path) {
+			if(isJsx(path)) {
+				const [_name, props, key] = path.get("arguments");
+				const name = jsxName(_name);
+				const [attributes, children] = jsxAttributes(props, key);
+				path.replaceWith(t.jsxElement(
+					t.jsxOpeningElement(name, attributes, children === undefined),
+					children !== undefined ? t.jsxClosingElement(name) : null,
+					children ?? [],
+				))
+			}
+		} }
+	});
+}
 
 /*
 function renameAll(scopes) {

@@ -200,10 +200,12 @@ const commaVisitor = (() => {
 
 	return {
 		VariableDeclaration(path) {
+			const kind = path.node.kind;
 			const decls = path.node.declarations;
 			if(decls.length > 1) {
-				path.node.declarations = [decls.pop()];
-				containerOf(path).insertBefore(decls.map(decl => t.variableDeclaration(path.node.kind, [decl])));
+				path.replaceWith(t.variableDeclaration(kind, [ decls.pop() ]));
+				containerOf(path).insertBefore(decls.map(decl => t.variableDeclaration(kind, [decl])));
+				path.scope.crawl();
 			}
 		},
 		ExpressionStatement(path) { commaInner(path, "expression"); },
@@ -451,11 +453,20 @@ function webpackModule(node) {
 
 			if(test(decl.get("init"), t.callExpression(t.memberExpression(Require, Id.n), [Id]))) {
 				const inner = decl.get("init.arguments.0");
-				if(binding(inner)._import) {
-					let name = inner.node.name;
-					rename(inner, name + "_", { prio: 1001 });
-					binding(decl.get("id"))._import = true;
-					rename(decl.get("id"), name, { prio: 1000 });
+				const bind = binding(inner);
+				if(bind._import) {
+					if(bind.references == 1
+						&& bind.referencePaths[0].node == inner.node
+						&& bind.path.node == node.getPrevSibling().get("declarations.0").node
+					) {
+						let name = inner.node.name;
+						inner.replaceWith(bind.path.node.init);
+						bind.path.remove();
+						binding(decl.get("id"))._import = true;
+						rename(decl.get("id"), name, { prio: 1000 });
+					} else {
+						throw new Error("invalid require.n()");
+					}
 				}
 			}
 		}

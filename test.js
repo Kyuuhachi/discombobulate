@@ -46,7 +46,7 @@ export const T = new Proxy(_ => { throw new Error("T is not a pattern"); }, {
 
 export const Id = new Proxy({
 	type: "Identifier",
-	[match]: path => path.isReferencedIdentifier(),
+	[match]: path => !!path.scope.getBinding(path.node.name),
 }, {
 	get(target, name) {
 		return target[name] ?? T.Identifier({ name })

@@ -484,11 +484,12 @@ function webpackModule(node) {
 const inferNamesVisitor = (() => {
 	return {
 		"ObjectPattern|ObjectExpression"(path) {
-			for(const prop of path.get("properties")) {
-				if(test(prop, t.objectProperty(T.Identifier, T.Identifier))) {
-					rename(prop.get("value"), prop.node.key.name)
-				} else if(test(prop, t.objectProperty(T.Identifier, t.assignmentPattern(T.Identifier, T.Expression)))) {
-					rename(prop.get("value.left"), prop.node.key.name)
+			for(const prop of path.get("properties").filter(p => !p.node.computed)) {
+				let val = prop.get("value")
+				if(test(val, Id)) {
+					rename(val, prop.node.key.name)
+				} else if(test(val, t.assignmentPattern(Id, T.Expression))) {
+					rename(val.get("left"), prop.node.key.name)
 				}
 			}
 		},
@@ -508,12 +509,13 @@ const inferNamesVisitor = (() => {
 const propertyShorthandVisitor = (() => {
 	return {
 		"ObjectPattern|ObjectExpression"(path) {
-			for(const prop of path.get("properties")) {
-				if(test(prop, t.objectProperty(T.Identifier, T.Identifier))) {
-					if(prop.node.value.name == prop.node.key.name)
+			for(const prop of path.get("properties").filter(p => !p.node.computed)) {
+				let val = prop.get("value")
+				if(test(val, T.Identifier)) {
+					if(val.node.name == prop.node.key.name)
 						prop.node.shorthand = true;
-				} else if(test(prop, t.objectProperty(T.Identifier, t.assignmentPattern(T.Identifier, T.Expression)))) {
-					if(prop.node.value.left.name == prop.node.key.name)
+				} else if(test(val, t.assignmentPattern(T.Identifier, T.Expression))) {
+					if(val.get("left").node.name == prop.node.key.name)
 						prop.node.shorthand = true;
 				}
 			}

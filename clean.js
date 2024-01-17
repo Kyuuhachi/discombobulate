@@ -165,7 +165,7 @@ const addBlockVisitor = (() => {
 			inner(path.get("consequent"));
 			inner(path.get("alternate"));
 		},
-		"Loop|WithStatement|LabeledStatement"(path) {
+		Loop(path) {
 			inner(path.get("body"));
 		},
 	}

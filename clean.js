@@ -18,16 +18,6 @@ function eq(a, b) {
 }
 
 export function clean(ast) {
-	let n = 0;
-	BTraverse.default(ast, { enter(path) {
-		if(path.node == path.scope.block) {
-			for(const k in path.scope.bindings) {
-				path.scope.rename(k, "v" + n++);
-			}
-		}
-	} })
-	const root = BTraverse.NodePath.get({ parent: ast, container: ast, key: "program" });
-
 	BTraverse.default(ast, BTraverse.visitors.merge([
 		zeroVisitor,
 		booleanVisitor,
@@ -40,6 +30,7 @@ export function clean(ast) {
 		restParameterVisitor,
 	]));
 
+	const root = BTraverse.NodePath.get({ parent: ast, container: ast, key: "program" });
 	root.scope.crawl();
 	if(webpack(root)) {
 		jsx(ast);

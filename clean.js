@@ -54,6 +54,7 @@ function rename(path, name, { prio = 0 } = {}) {
 	if((bind._renamePrio ?? -1) < prio) {
 		bind._rename = name;
 		bind._renamePrio = prio;
+		bind._named = true;
 	}
 }
 
@@ -377,14 +378,13 @@ function webpackModule(node) {
 	const Require = T.Identifier({ [match]: path => binding(path) == requireBinding });
 	const Exports = T.Identifier({ [match]: path => binding(path) == exportsBinding });
 
-	let import_n = 0;
 	node.get("body.body").forEach(node => {
 		if(test(node, t.variableDeclaration("var", [ t.variableDeclarator(T.Identifier, T.Expression) ]))) {
 			const decl = node.get("declarations.0");
 
 			if(test(decl.get("init"), t.callExpression(Require, [T.StringLiteral]))) {
 				binding(decl.get("id"))._import = true;
-				rename(decl.get("id"), "_" + import_n++, { prio: 1000 });
+				rename(decl.get("id"), "_", { prio: 1000 });
 			}
 
 			if(test(decl.get("init"), t.callExpression(t.memberExpression(Require, Id.n), [Id]))) {
@@ -454,25 +454,13 @@ const inferNamesVisitor = (() => {
 })();
 
 function fallbackNames(ast) {
-	let defs = [];
-	BTraverse.default(ast, {
-		Identifier(path) {
-			let bind = binding(path);
-			if(bind && bind.identifier == path.node) {
-				defs.push(bind);
-			}
-		}
-	});
-	let def_order = new Map(defs.map((bind, i) => [bind, i]));
-
 	let scope_count = 0;
 	BTraverse.default(ast, {
 		Scope(path) {
 			let unnamed = Object.values(path.scope.bindings).filter(v => !v._rename);
 			if(unnamed.length > 0) {
-				unnamed.sort((a, b) => def_order.get(a) - def_order.get(b));
 				const prefix = toExcelCol(scope_count++);
-				unnamed.forEach((bind, i) => bind._rename = prefix+i);
+				unnamed.forEach(bind => bind._rename = prefix);
 			}
 		},
 	});
@@ -488,14 +476,27 @@ function toExcelCol(n) {
 }
 
 function disambiguateNames(ast) {
+	let bind_n = 0;
+	BTraverse.default(ast, {
+		Identifier(path) {
+			let bind = binding(path);
+			if(bind && bind.identifier == path.node) {
+				bind._order = bind_n++;
+			}
+		}
+	});
+
 	const state = [Object.create(null)];
 	BTraverse.default(ast, {
 		Scope: {
 			enter(path) {
 				let next = Object.assign(Object.create(null), state.at(-1));
-				for(let bind of Object.values(path.scope.bindings)) {
-					if(bind._rename && bind.scope == path.scope) {
-						// Classes seem to be defined in two scopes, which is weird
+				let binds = Object.values(path.scope.bindings);
+				binds = binds.filter(b => b.scope == path.scope);
+				binds.sort((a, b) => a._order - b._order);
+				for(let bind of binds) {
+					if(bind._rename) {
+						if(!bind._named) next[bind._rename] ??= 0;
 						if(next[bind._rename] !== undefined) {
 							bind._rename += next[bind._rename]++;
 						} else {

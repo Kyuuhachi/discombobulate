@@ -38,6 +38,7 @@ export function clean(ast) {
 	}
 	BTraverse.default(ast, inferNamesVisitor);
 	fallbackNames(ast);
+	disambiguateNames(ast);
 	performRename(ast);
 	BTraverse.default(ast, propertyShorthandVisitor);
 }
@@ -54,32 +55,6 @@ function rename(path, name, { prio = 0 } = {}) {
 		bind._rename = name;
 		bind._renamePrio = prio;
 	}
-}
-
-function performRename(ast) {
-	const state = [];
-	BTraverse.default(ast, {
-		Scope: {
-			enter(path) {
-				path.scope.parentScope = state.at(-1)
-				state.push(path.scope);
-			},
-			exit(path) {
-				state.pop();
-			}
-		},
-
-		"Identifier|JSXIdentifier"(path) {
-			let bind = binding(path);
-			if(bind?._rename) {
-				let name = bind._rename;
-				if(bind._jsx) {
-					name = name.charAt(0).toUpperCase() + name.slice(1)
-				}
-				path.node.name = name;
-			}
-		}
-	})
 }
 
 function binding(path) {
@@ -513,6 +488,46 @@ function toExcelCol(n) {
 		chars.push(String.fromCodePoint('a'.codePointAt(0) + d - 1));
 	}
 	return chars.join('')
+}
+
+function disambiguateNames(ast) {
+	const state = [Object.create(null)];
+	BTraverse.default(ast, {
+		Scope: {
+			enter(path) {
+				let next = Object.assign(Object.create(null), state.at(-1));
+				for(let bind of Object.values(path.scope.bindings)) {
+					if(bind._rename && bind.scope == path.scope) {
+						// Classes seem to be defined in two scopes, which is weird
+						if(next[bind._rename] !== undefined) {
+							bind._rename += next[bind._rename]++;
+						} else {
+							next[bind._rename] = 0;
+						}
+					}
+				}
+				state.push(next);
+			},
+			exit(path) {
+				state.pop();
+			}
+		},
+	});
+}
+
+function performRename(ast) {
+	BTraverse.default(ast, {
+		"Identifier|JSXIdentifier"(path) {
+			let bind = binding(path);
+			if(bind?._rename) {
+				let name = bind._rename;
+				if(bind._jsx) {
+					name = name.charAt(0).toUpperCase() + name.slice(1)
+				}
+				path.node.name = name;
+			}
+		}
+	})
 }
 
 const propertyShorthandVisitor = (() => {

@@ -37,7 +37,7 @@ async function run(buf) {
 	text = cleanString(text);
 	if(opts.prettier) {
 		text = await prettier.format(text, {
-			parser: "babel",
+			parser: "babel-ts",
 			printWidth: 98,
 			useTabs: true,
 		})

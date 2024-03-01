@@ -29,6 +29,7 @@ export function clean(ast) {
 		objectParameterVisitor,
 		restParameterVisitor,
 		separateAssignVisitor,
+		enumVisitor,
 	]));
 
 	const root = BTraverse.NodePath.get({ parent: ast, container: ast, key: "program" });
@@ -385,6 +386,82 @@ const separateAssignVisitor = (() => {
 			bind.path.remove();
 			path.replaceWith(path.node.left);
 			parent.insertBefore(t.variableDeclaration("var", [decl]));
+		}
+	};
+})();
+
+const enumVisitor = (() => {
+	return {
+		VariableDeclarator(path) {
+			if(
+				// var a0 = EnumName || (EnumName = {});
+				path.parent.kind == "var"
+				&& test(path, t.variableDeclarator(
+					T.Identifier,
+					t.logicalExpression(
+						"||",
+						T.Identifier,
+						t.assignmentExpression(
+							"=",
+							T.Identifier,
+							t.objectExpression([])
+						)
+					)
+				))
+				&& binding(path.get("init.left")) == binding(path.get("init.right.left"))
+				&& binding(path.get("init.left")).constantViolations.length == 1
+			) {
+				let id = path.get("id");
+				let theId = T.Identifier({ [match]: v => binding(v) == binding(id) });
+
+				let body = [];
+				let next = path.parentPath;
+				let bodyType = undefined;
+				while(true) {
+					next = next.getNextSibling();
+					if(!test(next, t.expressionStatement(
+						t.assignmentExpression(
+							"=",
+							T.MemberExpression({ object: theId, }),
+							T.StringLiteral,
+						)
+					))) break;
+
+					let left = next.get("expression.left.property");
+					let right = next.get("expression.right").node;
+					if(next.node.expression.left.computed) {
+						// a0[a0.VALUE = 0] = "VALUE";
+						if(!test(left, t.assignmentExpression(
+							"=",
+							T.MemberExpression({
+								object: theId,
+								property: T.Identifier({ [match]: v => v.node.name == right.value }),
+							}),
+							T.NumericLiteral,
+						))) return;
+
+						bodyType = t.enumNumberBody;
+						body.push(t.enumNumberMember(left.node.left.property, left.node.right));
+					} else {
+						// a0.VALUE = "value";
+						bodyType = t.enumStringBody;
+						body.push(t.enumStringMember(t.identifier(left.node.name), right));
+					}
+				}
+
+				path.parentPath.replaceWith(t.enumDeclaration(
+					path.get("init.left").node,
+					bodyType(body),
+				));
+				let toRemove = path.parentPath;
+				for(const _ of body) {
+					toRemove = toRemove.getNextSibling();
+					toRemove.remove();
+				}
+
+				// I'd like to remove the stray var but that seems to mess up babel's scoping
+				// binding(path.get("init.left")).path.remove();
+			}
 		}
 	};
 })();

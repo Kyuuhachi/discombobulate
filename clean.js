@@ -455,13 +455,14 @@ const inferNamesVisitor = (() => {
 
 function fallbackNames(ast) {
 	let defs = [];
-
 	BTraverse.default(ast, {
-		BindingIdentifier(path) {
-			defs.push(binding(path));
+		Identifier(path) {
+			let bind = binding(path);
+			if(bind && bind.identifier == path.node) {
+				defs.push(bind);
+			}
 		}
 	});
-	
 	let def_order = new Map(defs.map((bind, i) => [bind, i]));
 
 	let scope_count = 0;

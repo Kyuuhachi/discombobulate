@@ -28,6 +28,7 @@ export function clean(ast) {
 		optionalParameterVisitor,
 		objectParameterVisitor,
 		restParameterVisitor,
+		separateAssignVisitor,
 	]));
 
 	const root = BTraverse.NodePath.get({ parent: ast, container: ast, key: "program" });
@@ -280,14 +281,14 @@ const objectParameterVisitor = (() => {
 		VariableDeclarator(path) {
 			if(test(path, t.variableDeclarator(T.ObjectPattern, Id)) && path.parent.kind == "let") {
 				let bind = binding(path.get("init"));
-				if(bind.references == 1) {
+				if(bind.references == 1 && path.scope == bind.scope) {
 					let scope = bind.scope;
 					let node = bind.path;
 					if(node.isVariableDeclarator()) node = node.get("id");
 					let left = path.node.id;
 					node.replaceWith(left);
 					path.remove();
-					scope.crawl();
+					scope.path.parentPath.scope.crawl();
 					scope.path.requeue(bind.path);
 				}
 			}
@@ -344,6 +345,47 @@ const restParameterVisitor = (() => {
 				});
 			}
 		} }
+	};
+})();
+
+function getPureParent(path) {
+	let parent = path;
+	while(!parent.listKey) {
+		if(!(
+			parent.parentPath.type == "MemberExpression" && parent.key == "object" ||
+			parent.parentPath.type == "AssignmentExpression" && parent.key == "left" ||
+			parent.parentPath.type == "ExpressionStatement" && parent.key == "expression" ||
+			false
+		)) {
+			return;
+		}
+		parent = parent.parentPath;
+		if(!parent.parentPath) return;
+	}
+	if(parent.parentPath.type != "BlockStatement" && parent.parentPath != "SequenceExpression") return;
+	return parent;
+}
+
+const separateAssignVisitor = (() => {
+	return {
+		AssignmentExpression(path) {
+			if(!path.parentPath.isMemberExpression()) return;
+			if(path.key != "object") return;
+			if(!path.get("left").isIdentifier()) return;
+
+			let bind = binding(path.get("left"));
+			if(bind.kind != "var") return;
+			if(bind.constantViolations.length != 1) return;
+
+			let parent = getPureParent(path);
+			let clone = t.cloneNode(path);
+			let decl = t.cloneNode(bind.path.node);
+			decl.init = path.node.right;
+
+			bind.path.remove();
+			path.replaceWith(path.node.left);
+			parent.insertBefore(t.variableDeclaration("var", [decl]));
+		}
 	};
 })();
 

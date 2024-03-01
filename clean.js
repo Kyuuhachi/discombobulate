@@ -479,16 +479,12 @@ function fallbackNames(ast) {
 }
 
 function toExcelCol(n) {
-	n += 1;
-	const chars = []
-	let d;
-	while(n > 0) {
-		const a = Math.floor(n / 26);
-		const b = n % 26;
-		[n, d] = b === 0 ? [a - 1, b + 26] : [a, b]
-		chars.push(String.fromCodePoint('a'.codePointAt(0) + d - 1));
+	const chars = [];
+	while(n >= 0) {
+		chars.push('a'.codePointAt(0) + n % 26);
+		n = Math.floor(n / 26) - 1;
 	}
-	return chars.join('')
+	return String.fromCodePoint(...chars.reverse());
 }
 
 function disambiguateNames(ast) {

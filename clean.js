@@ -43,7 +43,7 @@ export function clean(ast) {
 	BTraverse.default(ast, propertyShorthandVisitor);
 }
 
-function rename(path, name, { prio = 0 } = {}) {
+function rename(path, name, { prio = 0, named = true } = {}) {
 	if(!path.node) return;
 	if(!/^[_a-zA-Z]\w*$/.test(name)) {
 		(path.node.trailingComments ??= []).push({ value: `invalid name: ${name}` })
@@ -54,7 +54,7 @@ function rename(path, name, { prio = 0 } = {}) {
 	if((bind._renamePrio ?? -1) < prio) {
 		bind._rename = name;
 		bind._renamePrio = prio;
-		bind._named = true;
+		bind._named = named;
 	}
 }
 
@@ -384,7 +384,7 @@ function webpackModule(node) {
 
 			if(test(decl.get("init"), t.callExpression(Require, [T.StringLiteral]))) {
 				binding(decl.get("id"))._import = true;
-				rename(decl.get("id"), "_", { prio: 1000 });
+				rename(decl.get("id"), "_", { prio: 1000, named: false });
 			}
 
 			if(test(decl.get("init"), t.callExpression(t.memberExpression(Require, Id.n), [Id]))) {
@@ -399,7 +399,7 @@ function webpackModule(node) {
 						inner.replaceWith(bind.path.node.init);
 						bind.path.remove();
 						binding(decl.get("id"))._import = true;
-						rename(decl.get("id"), name, { prio: 1000 });
+						rename(decl.get("id"), name, { prio: 1000, named: false });
 					} else {
 						throw new Error("invalid require.n()");
 					}

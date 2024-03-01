@@ -3,7 +3,7 @@ import BTraverse  from "@babel/traverse";
 import BGenerator from "@babel/generator";
 import * as t     from "@babel/types";
 
-import {test, Id, T, match} from "./test.js";
+import {test, Id, T, match} from "./query.js";
 
 const traverse = BTraverse.default;
 

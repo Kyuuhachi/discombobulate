@@ -10,7 +10,7 @@ const traverse = BTraverse.default;
 export function cleanString(source) {
 	const ast = BParser.parse(source);
 	clean(ast);
-	return BGenerator.default(ast).code
+	return BGenerator.default(ast, { compact: true }).code
 }
 
 function eq(a, b) {
@@ -32,91 +32,59 @@ export function clean(ast) {
 
 	const root = BTraverse.NodePath.get({ parent: ast, container: ast, key: "program" });
 	root.scope.crawl();
+	
 	if(webpack(root)) {
 		jsx(ast);
 	}
 	BTraverse.default(ast, inferNamesVisitor);
+	fallbackNames(ast);
+	performRename(ast);
 	BTraverse.default(ast, propertyShorthandVisitor);
-
-	// 2015 parameters
-	//      template-literals
-	//      literals
-	//      shorthand-properties
-	// 2020 nullish-coalescing-operator
-	//      optional-chaining
-
-	// const {scopes} = escope.analyze(ast, { ecmaVersion: 6 });
-	// for(const scope of scopes) {
-	// 	if(scope.type != "class" && scope.type != "TDZ") {
-	// 		for(let variable of scope.variables) {
-	// 			for(const def of variable.identifiers) {
-	// 				if(def.variable) throw def;
-	// 				Object.defineProperty(def, "variable", { value: variable, enumerable: false });
-	// 			}
-	// 			for(const ref of variable.references) {
-	// 				if(ref.identifier.variable !== undefined
-	// 					&& !Object.is(ref.identifier.variable, variable)
-	// 				) {
-	// 					throw ref;
-	// 				}
-	// 				Object.defineProperty(ref.identifier, "variable", { value: variable, enumerable: false });
-	// 			}
-	// 		}
-	// 	}
-	// }
-	//
-	// unminify(ast);
-	// restoreTemplates(ast);
-	// const isWebpack = webpack(ast);
-	// foldDestructures(ast);
-	// if(isWebpack) {
-	// 	unjsx(ast);
-	// }
-	// unzero(ast);
-	// inferNames(ast);
-	// renameAll(scopes);
-	// if(isWebpack) {
-	// 	renameJsx(scopes);
-	// }
-	// objectShorthand(ast);
 }
 
 function rename(path, name, { prio = 0 } = {}) {
 	if(!path.node) return;
-	if(!/^[_a-zA-Z]\w*$/.test(name)) return false;
+	if(!/^[_a-zA-Z]\w*$/.test(name)) {
+		(path.node.trailingComments ??= []).push({ value: `invalid name: ${name}` })
+		name = "INVALID_NAME";
+	}
 	path.assertIdentifier();
-	if(name == "default") name += "_";
 	let bind = binding(path);
-	if(bind._renamePrio ?? -1 < prio) {
+	if((bind._renamePrio ?? -1) < prio) {
+		bind._rename = name;
 		bind._renamePrio = prio;
-		path.scope.rename(path.node.name, name);
 	}
 }
 
-// function rename(variable, name, force = false) {
-// 	if(!variable || variable._renamed && !force) return false;
-// 	if(!/^[_a-zA-Z]\w*$/.test(name)) return false;
-//
-// 	let vars = [
-// 		...variable.scope.through.map(v => v.resolved),
-// 		...variable.scope.set.values(),
-// 	].filter(v => v);
-// 	let rawName = name;
-// 	let n = 0;
-// 	while(name == "default" || vars.find(v => v.name == name)) {
-// 		name = rawName + (n++);
-// 	}
-//
-// 	variable._renamed = true;
-// 	variable.name = name;
-// 	for(let def of variable.identifiers) def.name = name;
-// 	for(let ref of variable.references) ref.identifier.name = name;
-// 	return name == rawName;
-// }
+function performRename(ast) {
+	const state = [];
+	BTraverse.default(ast, {
+		Scope: {
+			enter(path) {
+				path.scope.parentScope = state.at(-1)
+				state.push(path.scope);
+			},
+			exit(path) {
+				state.pop();
+			}
+		},
+
+		"Identifier|JSXIdentifier"(path) {
+			let bind = binding(path);
+			if(bind?._rename) {
+				let name = bind._rename;
+				if(bind._jsx) {
+					name = name.charAt(0).toUpperCase() + name.slice(1)
+				}
+				path.node.name = name;
+			}
+		}
+	})
+}
 
 function binding(path) {
-	path.assertIdentifier();
-	return path.scope.getBinding(path.node.name);
+	if(path.isReferencedIdentifier() || path.isBindingIdentifier() || path.node.jsxbind)
+		return path.scope.getBinding(path.node.name);
 }
 
 const zeroVisitor = (() => {
@@ -430,7 +398,9 @@ function webpackModule(node) {
 	rename(_require, "require");
 
 	const requireBinding = binding(_require);
+	const exportsBinding = binding(_exports);
 	const Require = T.Identifier({ [match]: path => binding(path) == requireBinding });
+	const Exports = T.Identifier({ [match]: path => binding(path) == exportsBinding });
 
 	let import_n = 0;
 	node.get("body.body").forEach(node => {
@@ -450,7 +420,7 @@ function webpackModule(node) {
 						&& bind.referencePaths[0].node == inner.node
 						&& bind.path.node == node.getPrevSibling().get("declarations.0").node
 					) {
-						let name = inner.node.name;
+						let name = binding(inner)._rename;
 						inner.replaceWith(bind.path.node.init);
 						bind.path.remove();
 						binding(decl.get("id"))._import = true;
@@ -463,7 +433,7 @@ function webpackModule(node) {
 		}
 
 		if(test(node, t.expressionStatement(
-			t.callExpression(t.memberExpression(Require, Id.d), [ Id.exports, T.ObjectExpression ]),
+			t.callExpression(t.memberExpression(Require, Id.d), [Exports, T.ObjectExpression]),
 		))) {
 			for(const prop of node.get("expression.arguments.1.properties")) {
 				if(!test(prop, t.objectProperty(T.Identifier,
@@ -484,27 +454,66 @@ function webpackModule(node) {
 const inferNamesVisitor = (() => {
 	return {
 		"ObjectPattern|ObjectExpression"(path) {
+			const prio = path.name == "ObjectPattern" ? 503 : 502;
 			for(const prop of path.get("properties").filter(p => !p.node.computed)) {
 				let val = prop.get("value")
 				if(test(val, Id)) {
-					rename(val, prop.node.key.name)
+					rename(val, prop.node.key.name, { prio })
 				} else if(test(val, t.assignmentPattern(Id, T.Expression))) {
-					rename(val.get("left"), prop.node.key.name)
+					rename(val.get("left"), prop.node.key.name, { prio })
 				}
+			}
+		},
+		JSXAttribute(path) {
+			// I'm giving object expressions higher priority because that allows shorthand syntax, unlike jsx
+			if(test(path, t.jsxAttribute(T.JSXIdentifier, t.jsxExpressionContainer(Id)))) {
+				rename(path.get("value.expression"), path.node.name.name, { prio: 501 });
 			}
 		},
 		JSXSpreadAttribute(path) {
 			if(test(path, t.jsxSpreadAttribute(Id))) {
-				rename(path.get("argument"), "props");
+				rename(path.get("argument"), "props", { prio: 500 });
 			}
 		},
-		JSXAttribute(path) {
-			if(test(path, t.jsxAttribute(T.JSXIdentifier, t.jsxExpressionContainer(Id)))) {
-				rename(path.get("value.expression"), path.node.name.name);
-			}
-		}
 	}
 })();
+
+function fallbackNames(ast) {
+	let defs = [];
+
+	BTraverse.default(ast, {
+		BindingIdentifier(path) {
+			defs.push(binding(path));
+		}
+	});
+	
+	let def_order = new Map(defs.map((bind, i) => [bind, i]));
+
+	let scope_count = 0;
+	BTraverse.default(ast, {
+		Scope(path) {
+			let unnamed = Object.values(path.scope.bindings).filter(v => !v._rename);
+			if(unnamed.length > 0) {
+				unnamed.sort((a, b) => def_order.get(a) - def_order.get(b));
+				const prefix = toExcelCol(scope_count++);
+				unnamed.forEach((bind, i) => bind._rename = prefix+i);
+			}
+		},
+	});
+}
+
+function toExcelCol(n) {
+	n += 1;
+	const chars = []
+	let d;
+	while(n > 0) {
+		const a = Math.floor(n / 26);
+		const b = n % 26;
+		[n, d] = b === 0 ? [a - 1, b + 26] : [a, b]
+		chars.push(String.fromCodePoint('a'.codePointAt(0) + d - 1));
+	}
+	return chars.join('')
+}
 
 const propertyShorthandVisitor = (() => {
 	return {
@@ -547,7 +556,7 @@ function jsx(ast) {
 	let react = findReact(ast);
 	if(!react) return;
 	react.path.assertVariableDeclarator();
-	rename(react.path.get("id"), "React", { prio: 2000 });
+	rename(react.path.get("id"), "ReactJsx", { prio: 2000 });
 
 	function jsxName(name, top = true) {
 		if(test(name, T.StringLiteral)) {
@@ -558,11 +567,13 @@ function jsx(ast) {
 				jsxName(name.get("property")),
 			);
 		} else if(test(name, T.Identifier)) {
-			if(top && binding(name)) binding(name)._jsx = true;
+			if(top && binding(name)) {
+				name.scope.rename(name.node.name, "AAAAA" + name.node.name)
+				binding(name)._jsx = true;
+			}
 			return t.jsxIdentifier(name.node.name);
 		} else {
-			console.error(name.node);
-			throw new Error("invalid jsxName");
+			complain(name, "is not a valid JSX name")
 		}
 	}
 
@@ -582,7 +593,7 @@ function jsx(ast) {
 			} else if(item.type == "SpreadElement") {
 				attributes.push(t.jsxSpreadAttribute(item.node.argument));
 			} else {
-				throw new Error("invalid jsxAttributes");
+				complain(item, "is not a valid JSX attribute")
 			}
 		}
 		if(key) {
@@ -615,17 +626,27 @@ function jsx(ast) {
 	BTraverse.default(ast, {
 		CallExpression: { exit(path) {
 			if(isJsx(path)) {
-				const [_name, props, key] = path.get("arguments");
-				const name = jsxName(_name);
-				const [attributes, children] = jsxAttributes(props, key);
-				path.replaceWith(t.jsxElement(
-					t.jsxOpeningElement(name, attributes, children === undefined),
-					children !== undefined ? t.jsxClosingElement(name) : null,
-					children ?? [],
-				))
+				try {
+					const [_name, props, key] = path.get("arguments");
+					const name = jsxName(_name);
+					const [attributes, children] = jsxAttributes(props, key);
+					path.replaceWith(t.jsxElement(
+						t.jsxOpeningElement(name, attributes, children === undefined),
+						children !== undefined ? t.jsxClosingElement(name) : null,
+						children ?? [],
+					))
+				} catch(e) {
+					if(!(e instanceof Complaint)) throw e;
+				}
 			}
 		} }
 	});
+}
+
+class Complaint extends Error {}
+function complain(node, what) {
+	(node.node.trailingComments ??= []).push({ value: `${node.type} ${what}` })
+	throw new Complaint();
 }
 
 /*
@@ -676,46 +697,5 @@ function renameJsx(scopes) {
 }
 
 // }}}
-
-function restoreTemplates(ast) {
-	estraverse.replace(ast, {
-		leave(node) {
-			if(test(node, T.CallExpression({
-				callee: T.MemberExpression({
-					object: T.StringLiteral,
-					property: Id.concat,
-				})
-			}))) {
-				return T.TemplateLiteral({
-					quasis: [
-						T.TemplateElement({ value: { raw: node.callee.object.value } }),
-						T.TemplateElement({ value: { raw: node.arguments[1]?.value ?? "" } }),
-					],
-					expressions: [
-						node.arguments[0],
-					],
-				})
-			}
-
-			if(test(node, T.CallExpression({
-				callee: T.MemberExpression({
-					object: T.TemplateLiteral,
-					property: Id.concat,
-				})
-			}))) {
-				return T.TemplateLiteral({
-					quasis: [
-						...node.callee.object.quasis,
-						T.TemplateElement({ value: { raw: node.arguments[1]?.value ?? "" } }),
-					],
-					expressions: [
-						...node.callee.object.expressions,
-						node.arguments[0],
-					],
-				})
-			}
-		}
-	})
-}
 
 */

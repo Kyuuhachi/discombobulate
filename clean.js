@@ -288,6 +288,7 @@ const objectParameterVisitor = (() => {
 					if(node.isVariableDeclarator()) node = node.get("id");
 					let left = path.node.id;
 					node.replaceWith(left);
+					path.opts = { noScope: true };
 					path.remove();
 					scope.path.parentPath.scope.crawl();
 					scope.path.requeue(bind.path);

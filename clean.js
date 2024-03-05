@@ -18,6 +18,13 @@ function eq(a, b) {
 }
 
 export function clean(ast) {
+	BTraverse.default(ast, {
+		Scope(path) {
+			for(const [name, bind] of Object.entries(path.scope.bindings)) {
+				path.scope.rename(name, path.scope.generateUid());
+			}
+		}
+	});
 	BTraverse.default(ast, BTraverse.visitors.merge([
 		zeroVisitor,
 		booleanVisitor,
@@ -34,7 +41,7 @@ export function clean(ast) {
 
 	const root = BTraverse.NodePath.get({ parent: ast, container: ast, key: "program" });
 	root.scope.crawl();
-	
+
 	if(webpack(root)) {
 		jsx(ast);
 	}
@@ -60,8 +67,9 @@ function rename(path, name, { prio = 0, named = true } = {}) {
 	}
 }
 
+// Does babel really not have this function? Dumb.
 function binding(path) {
-	if(path.isReferencedIdentifier() || path.isBindingIdentifier() || path.node.jsxbind)
+	if(path.isReferencedIdentifier() || path.isBindingIdentifier())
 		return path.scope.getBinding(path.node.name);
 }
 

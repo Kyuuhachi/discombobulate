@@ -7,6 +7,7 @@ import * as prettier from "prettier";
 import { cleanString } from "./clean.js";
 
 program.option("-n, --no-prettier").option("--prettier");
+program.option("-i, --in-place");
 program.parse();
 const opts = program.opts();
 
@@ -15,11 +16,15 @@ if(program.args.length) {
 	for(const path of program.args) {
 		const input = await fsp.readFile(path);
 		const output = await run(input);
-		console.log(path);
-		results.push({
-			path,
-			output,
-		});
+		if(opts.in_place) {
+			console.log(path);
+			results.push({
+				path,
+				output,
+			});
+		} else {
+			await process.stdout.write(output);
+		}
 	}
 	for(const { path, output } of results) {
 		await fsp.writeFile(path, output);

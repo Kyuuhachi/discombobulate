@@ -57,10 +57,9 @@ webpack["996676"] = function (module, exports, require) {
 
 Imports and exports are easier to identify, most variables have names, and there's a nice little JSX expression there at the bottom. Sweet!
 
-This small example isn't really enough to showcase the full extent of Discombobulate,
-but anything bigger would needlessly clutter this readme and possibly count as copyright infringement.
-
 <hr></details>
+
+A larger example can be found in the [`examples/`](examples/) directory.
 
 Note that while this cleaned output is useful for understanding Discord's code, it's not particularly useful for formulating patches.
 You'll probably want to keep a copy of the raw code as well if you're into that.

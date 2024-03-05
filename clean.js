@@ -37,6 +37,7 @@ export function clean(ast) {
 		restParameterVisitor,
 		separateAssignVisitor,
 		enumVisitor,
+		outlineFunctionVisitor,
 	]));
 
 	const root = BTraverse.NodePath.get({ parent: ast, container: ast, key: "program" });
@@ -470,6 +471,62 @@ const enumVisitor = (() => {
 
 				// I'd like to remove the stray var but that seems to mess up babel's scoping
 				// binding(path.get("init.left")).path.remove();
+			}
+		}
+	};
+})();
+
+const outlineFunctionVisitor = (() => {
+	function getRootScope(scope) {
+		while(scope.parent?.parent) {
+			scope = scope.parent;
+		}
+		return scope;
+	}
+
+	function isPure(path) {
+		const rootScope = getRootScope(path.scope);
+		const validBindings = new Set([undefined]);
+		function add(scope) {
+			for(const bind of Object.values(scope.bindings)) {
+				validBindings.add(bind);
+			}
+		}
+		add(rootScope);
+		add(path.scope);
+		let pure = true;
+		path.traverse({
+			Scope(path) {
+				add(path.scope);
+			},
+			Identifier(path) {
+				if(!validBindings.has(binding(path))) {
+					pure = false;
+					path.stop();
+				}
+			}
+		})
+		return pure
+	}
+
+	return {
+		CallExpression: {
+			exit(path) {
+				if(path.get("callee").isFunctionExpression() && isPure(path.get("callee"))) {
+					const id = path.scope.generateUid();
+					const func = Object.assign({}, t.cloneNode(path.node.callee),  {
+						type: "FunctionDeclaration",
+						id: t.identifier(id),
+					});
+					(func.body.leadingComments ??= []).push({ value: " outlined" })
+					const rootScope = getRootScope(path.scope);
+					let node = path.scope.path;
+					while(node.parentPath.parentPath != rootScope.path) {
+						node = node.parentPath;
+					}
+					node.insertBefore(func);
+					path.get("callee").replaceWith(t.identifier(id));
+				}
 			}
 		}
 	};
